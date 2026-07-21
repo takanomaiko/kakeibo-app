@@ -28,6 +28,17 @@
   .cat .cbar > div { height: 100%; border-radius: 4px; transition: width .4s; }
   .cat .num { font-size: 11px; color: #a08c8c; width: 7.8em; text-align: right; flex-shrink: 0; }
   .day { font-size: 12px; color: #c98a9c; font-weight: 700; margin: 14px 4px 5px; }
+  /* 円グラフ（今月の内訳） */
+  .donutWrap { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  .donutSvg { width: 130px; height: 130px; flex-shrink: 0; }
+  .donutCenter { fill: #4a3f3f; font-weight: 700; }
+  .donutCenterSub { fill: #a08c8c; }
+  .legend { flex: 1; min-width: 140px; }
+  .legrow { display: flex; align-items: center; gap: 7px; padding: 3px 0; font-size: 12px; }
+  .legdot { width: 11px; height: 11px; border-radius: 3px; flex-shrink: 0; }
+  .legname { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .legpct { color: #a08c8c; width: 3.2em; text-align: right; flex-shrink: 0; }
+  .legamt { width: 5.2em; text-align: right; flex-shrink: 0; }
   .item { background: #fff; border-radius: 14px; padding: 10px 12px; margin-bottom: 6px; display: flex; align-items: center; gap: 8px; box-shadow: 0 2px 6px rgba(180,140,140,.08); }
   .item .info { flex: 1; min-width: 0; }
   .item .shop { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -121,15 +132,15 @@
      ・budget は「初期値」。実際の予算は ⚙️ 設定画面で変更できます
      ============================================================ */
   var CATEGORIES = [
-    { name: '食費・日用品',   emoji: '🛒', budget: 40000 },
-    { name: '教育費',        emoji: '📚', budget: 10000 },
-    { name: '外食',          emoji: '🍽️', budget: 15000 },
-    { name: 'オシャレ',      emoji: '👗', budget: 10000 },
-    { name: '交通費',        emoji: '🚃', budget: 5000 },
-    { name: '交際費',        emoji: '🍻', budget: 10000 },
-    { name: '趣味・レジャー', emoji: '🎥', budget: 10000 },
-    { name: '医療費',        emoji: '💊', budget: 5000 },
-    { name: '激ヤバ',        emoji: '💸', budget: 0 }
+    { name: '食費・日用品',   emoji: '🛒', budget: 40000, color: '#ff8fab' },
+    { name: '教育費',        emoji: '📚', budget: 10000, color: '#ffc4a3' },
+    { name: '外食',          emoji: '🍽️', budget: 15000, color: '#ffd670' },
+    { name: 'オシャレ',      emoji: '👗', budget: 10000, color: '#c3a6ff' },
+    { name: '交通費',        emoji: '🚃', budget: 5000,  color: '#8fd3c8' },
+    { name: '交際費',        emoji: '🍻', budget: 10000, color: '#f5a3c7' },
+    { name: '趣味・レジャー', emoji: '🎥', budget: 10000, color: '#a3c9ff' },
+    { name: '医療費',        emoji: '💊', budget: 5000,  color: '#b5e0a0' },
+    { name: '激ヤバ',        emoji: '💸', budget: 0,     color: '#ff6b6b' }
   ];
   /* ▲▲▲ 設定はここまで ▲▲▲ */
 
@@ -148,6 +159,12 @@
     return null;
   }
   function emojiFor(name) { var c = catDef(name); return c ? c.emoji : ''; }
+  var EXTRA_COLORS = ['#c9b6a0', '#9ad0e0', '#e0b0d0', '#b0c0a0'];
+  function colorFor(name, i) {
+    var c = catDef(name);
+    if (c) return c.color;
+    return EXTRA_COLORS[(i || 0) % EXTRA_COLORS.length];
+  }
   function label(name) { var e = emojiFor(name); return (e ? e + ' ' : '') + name; }
   function budgetFor(name) {
     if (name in state.budgets) return Number(state.budgets[name]);
@@ -231,6 +248,8 @@
     if (remain < 0) html += '<div class="perday">😢 予算を ' + yen(-remain) + ' オーバーしています</div>';
     html += '</div>';
 
+    html += donutHtml(d);
+
     var cats = d.budgets.filter(function (b) { return b.budget > 0 || b.spent > 0; });
     if (cats.length) {
       html += '<div class="card"><h2>カテゴリ別</h2>';
@@ -261,6 +280,41 @@
 
     document.getElementById('app').innerHTML = html;
     fillCatOptions();
+  }
+
+  function donutHtml(d) {
+    // 使った額が 1円以上の費目だけを、多い順に並べる
+    var segs = d.budgets.filter(function (b) { return b.spent > 0; })
+      .sort(function (a, b) { return b.spent - a.spent; });
+    if (!segs.length) return '';
+
+    var r = 52, cx = 65, cy = 65, C = 2 * Math.PI * r;
+    var acc = 0, circles = '', legend = '';
+    segs.forEach(function (b, i) {
+      var frac = b.spent / d.totalSpent;
+      var col = colorFor(b.category, i);
+      var len = frac * C;
+      // -90度回転して真上（12時）から時計回りに描く
+      circles += '<circle cx="' + cx + '" cy="' + cy + '" r="' + r + '" fill="none" '
+        + 'stroke="' + col + '" stroke-width="20" '
+        + 'stroke-dasharray="' + len.toFixed(2) + ' ' + (C - len).toFixed(2) + '" '
+        + 'stroke-dashoffset="' + (-acc).toFixed(2) + '" '
+        + 'transform="rotate(-90 ' + cx + ' ' + cy + ')"></circle>';
+      var pct = Math.round(frac * 100);
+      legend += '<div class="legrow"><span class="legdot" style="background:' + col + '"></span>'
+        + '<span class="legname">' + esc(label(b.category)) + '</span>'
+        + '<span class="legpct">' + pct + '%</span>'
+        + '<span class="legamt">' + yen(b.spent) + '</span></div>';
+      acc += len;
+    });
+
+    var svg = '<svg class="donutSvg" viewBox="0 0 130 130">' + circles
+      + '<text class="donutCenterSub" x="65" y="60" text-anchor="middle" font-size="9">合計</text>'
+      + '<text class="donutCenter" x="65" y="76" text-anchor="middle" font-size="15">' + yen(d.totalSpent) + '</text>'
+      + '</svg>';
+
+    return '<div class="card"><h2>今月の内訳</h2><div class="donutWrap">'
+      + svg + '<div class="legend">' + legend + '</div></div></div>';
   }
 
   function catSelect(it) {
