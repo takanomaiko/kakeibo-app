@@ -53,8 +53,11 @@
   .sheet h3 { font-size: 15px; color: #c98a9c; margin-bottom: 14px; }
   .field { margin-bottom: 12px; }
   .field label { display: block; font-size: 12px; color: #a08c8c; margin-bottom: 4px; }
-  .field input, .field select { width: 100%; border: 1.5px solid #f0d9dd; border-radius: 12px; padding: 10px 12px; font-size: 16px; background: #fffafb; color: #4a3f3f; }
-  .row2 { display: flex; gap: 10px; } .row2 .field { flex: 1; min-width: 0; }
+  .field input, .field select { width: 100%; min-width: 0; max-width: 100%; border: 1.5px solid #f0d9dd; border-radius: 12px; padding: 10px 12px; font-size: 16px; background: #fffafb; color: #4a3f3f; }
+  /* iOS Safari の日付入力が枠からはみ出すのを防ぐ */
+  .field input[type="date"] { -webkit-appearance: none; appearance: none; }
+  .field input[type="date"]::-webkit-date-and-time-value { text-align: left; margin: 0; min-width: 0; }
+  .row2 { display: flex; gap: 10px; } .row2 .field { flex: 1 1 0; min-width: 0; }
   .primaryBtn { width: 100%; border: none; border-radius: 14px; padding: 14px; font-size: 16px; font-weight: 700; color: #fff; background: linear-gradient(135deg, #ffb3c6, #ff8fab); margin-top: 4px; cursor: pointer; }
   .primaryBtn:disabled { opacity: .5; }
   .linkBtn { display: block; width: 100%; background: none; border: none; color: #c98a9c; font-size: 13px; margin-top: 16px; cursor: pointer; text-decoration: underline; }
