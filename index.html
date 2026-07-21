@@ -53,7 +53,8 @@
   .sheet h3 { font-size: 15px; color: #c98a9c; margin-bottom: 14px; }
   .field { margin-bottom: 12px; }
   .field label { display: block; font-size: 12px; color: #a08c8c; margin-bottom: 4px; }
-  .field input, .field select { width: 100%; min-width: 0; max-width: 100%; border: 1.5px solid #f0d9dd; border-radius: 12px; padding: 10px 12px; font-size: 16px; background: #fffafb; color: #4a3f3f; }
+  .field input, .field select, .field textarea { width: 100%; min-width: 0; max-width: 100%; border: 1.5px solid #f0d9dd; border-radius: 12px; padding: 10px 12px; font-size: 16px; background: #fffafb; color: #4a3f3f; font-family: inherit; }
+  .field textarea { resize: vertical; line-height: 1.5; }
   /* iOS Safari の日付入力が枠からはみ出すのを防ぐ */
   .field input[type="date"] { -webkit-appearance: none; appearance: none; }
   .field input[type="date"]::-webkit-date-and-time-value { text-align: left; margin: 0; min-width: 0; }
@@ -119,6 +120,10 @@
 <!-- 予算の設定シート -->
 <div id="setOverlay" class="overlay" onclick="closeSettings()"></div>
 <div id="setSheet" class="sheet"></div>
+
+<!-- まとめて取り込みシート -->
+<div id="impOverlay" class="overlay" onclick="closeImport()"></div>
+<div id="impSheet" class="sheet"></div>
 
 <!-- Supabase のライブラリを読み込み -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -402,6 +407,7 @@
     });
     h += '</div><div class="settotal" id="setTotal"></div>';
     h += '<button class="primaryBtn" id="setSaveBtn" onclick="saveSettings()">保存する</button>';
+    h += '<button class="linkBtn" onclick="openImport()">📥 データをまとめて取り込み</button>';
     h += '<button class="linkBtn" onclick="doLogout()">ログアウト</button>';
     var el = document.getElementById('setSheet');
     el.innerHTML = h;
@@ -431,6 +437,67 @@
   function closeSettings() {
     document.getElementById('setOverlay').className = 'overlay';
     document.getElementById('setSheet').style.display = 'none';
+  }
+
+  /* ---- まとめて取り込みシート ---- */
+  function openImport() {
+    closeSettings();
+    var el = document.getElementById('impSheet');
+    el.innerHTML = '<h3>📥 データをまとめて取り込み</h3>'
+      + '<div class="field"><label>1行1件・タブ区切り（日付／金額／内容／カテゴリ／支払方法）</label>'
+      + '<textarea id="impText" rows="6" placeholder="2026-06-01&#9;500&#9;スーパー&#9;食費・日用品&#9;イオンカード"></textarea></div>'
+      + '<div class="settotal" id="impInfo">貼り付けると件数が出ます</div>'
+      + '<button class="primaryBtn" id="impBtn" onclick="runImport()">取り込む</button>'
+      + '<button class="linkBtn" onclick="closeImport()">とじる</button>';
+    document.getElementById('impText').addEventListener('input', updateImpInfo);
+    document.getElementById('impOverlay').className = 'overlay show';
+    el.style.display = 'block';
+  }
+  function closeImport() {
+    document.getElementById('impOverlay').className = 'overlay';
+    document.getElementById('impSheet').style.display = 'none';
+  }
+  function isRealDate(s) {
+    var p = s.split('-'), yy = +p[0], mm = +p[1], dd = +p[2];
+    var d = new Date(yy, mm - 1, dd);
+    return d.getFullYear() === yy && d.getMonth() === mm - 1 && d.getDate() === dd;
+  }
+  function parseImport(text) {
+    var lines = text.split(/\r?\n/).map(function (l) { return l.replace(/\s+$/, ''); }).filter(function (l) { return l.trim(); });
+    var rows = [], errors = [];
+    lines.forEach(function (line, i) {
+      var p = line.split('\t');
+      if (p.length < 5) { errors.push((i + 1) + '行目：列が足りません'); return; }
+      var date = p[0].trim(), amount = Number(p[1].trim());
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !isRealDate(date)) { errors.push((i + 1) + '行目：日付が正しくありません（例：2026-06-01）'); return; }
+      if (!(amount > 0)) { errors.push((i + 1) + '行目：金額が正しくありません'); return; }
+      rows.push({ date: date, amount: Math.round(amount), shop: p[2].trim() || '（無題）', category: p[3].trim(), pay: p[4].trim() || 'その他' });
+    });
+    return { rows: rows, errors: errors };
+  }
+  function updateImpInfo() {
+    var r = parseImport(document.getElementById('impText').value);
+    var msg = '取り込める：' + r.rows.length + '件';
+    if (r.errors.length) msg += ' ／ ⚠️スキップ：' + r.errors.length + '件（' + esc(r.errors.slice(0, 2).join('、')) + (r.errors.length > 2 ? ' …' : '') + '）';
+    document.getElementById('impInfo').innerHTML = msg;
+  }
+  async function runImport() {
+    var parsed = parseImport(document.getElementById('impText').value);
+    if (!parsed.rows.length) { alert('取り込めるデータがありません'); return; }
+    var unknown = parsed.rows.filter(function (r) { return !catDef(r.category); });
+    var note = unknown.length ? '\n（' + unknown.length + '件は未登録カテゴリですが、そのまま取り込みます）' : '';
+    if (!confirm(parsed.rows.length + '件を取り込みます。よろしいですか？' + note)) return;
+    var btn = document.getElementById('impBtn');
+    btn.disabled = true; btn.textContent = '取り込み中…';
+    var payload = parsed.rows.map(function (r) {
+      return { user_id: state.uid, date: r.date, amount: r.amount, shop: r.shop, category: r.category, pay: r.pay };
+    });
+    var res = await sb.from('entries').insert(payload);
+    btn.disabled = false; btn.textContent = '取り込む';
+    if (res.error) { alert('取り込みに失敗：' + res.error.message); return; }
+    closeImport();
+    alert(parsed.rows.length + '件を取り込みました🌸');
+    await refresh();
   }
 
   /* ---- ログイン関係 ---- */
