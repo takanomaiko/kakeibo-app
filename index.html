@@ -69,6 +69,20 @@
   .settotal { font-size: 12px; color: #a08c8c; text-align: right; margin: 2px 2px 12px; }
   .empty { text-align: center; color: #b8a5a5; font-size: 13px; padding: 20px 0; }
 
+  /* カテゴリ詳細画面 */
+  .cat { cursor: pointer; }
+  .cat .name { display: flex; align-items: center; }
+  .cat .chev { color: #d9bcbc; font-size: 12px; margin-left: 4px; }
+  #detail { position: fixed; inset: 0; background: #fff7f5; z-index: 40; display: none; flex-direction: column; }
+  #detail.show { display: flex; }
+  .dHead { background: linear-gradient(135deg, #ffb3c6, #ff8fab); color: #fff; padding: 14px 16px; display: flex; align-items: center; gap: 12px; box-shadow: 0 2px 8px rgba(255,143,171,.35); flex-shrink: 0; }
+  .dHead button { background: rgba(255,255,255,.25); border: none; color: #fff; width: 34px; height: 34px; border-radius: 50%; font-size: 15px; cursor: pointer; flex-shrink: 0; }
+  .dHead .dTtl { font-size: 16px; font-weight: 700; }
+  .dHead .dSub { font-size: 12px; opacity: .9; margin-top: 2px; }
+  .dBody { flex: 1; overflow-y: auto; padding: 14px; max-width: 560px; margin: 0 auto; width: 100%; }
+  .chartSvg { width: 100%; height: auto; display: block; }
+  .dEmpty { text-align: center; color: #b8a5a5; font-size: 13px; padding: 24px 0; }
+
   /* ログイン画面 */
   #login { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; padding: 24px; background: linear-gradient(160deg, #ffe3ea, #fff7f5); z-index: 50; }
   .logincard { background: #fff; border-radius: 24px; padding: 30px 24px; width: 100%; max-width: 360px; box-shadow: 0 8px 24px rgba(255,143,171,.25); }
@@ -89,6 +103,15 @@
 </header>
 <main id="app"></main>
 <button id="fab" onclick="openSheet()">＋</button>
+
+<!-- カテゴリ詳細画面 -->
+<div id="detail">
+  <div class="dHead">
+    <button onclick="closeCatDetail()">◀</button>
+    <div><div class="dTtl" id="dTtl"></div><div class="dSub" id="dSub"></div></div>
+  </div>
+  <div class="dBody" id="dBody"></div>
+</div>
 
 <!-- ログイン画面 -->
 <div id="login">
@@ -161,6 +184,7 @@
   function ymStr() { return y + '-' + ('0' + (mo + 1)).slice(-2); }
   function yen(n) { return '¥' + Number(n).toLocaleString(); }
   function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+  function jstr(s) { return String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'"); }
 
   function catDef(name) {
     for (var i = 0; i < CATEGORIES.length; i++) if (CATEGORIES[i].name === name) return CATEGORIES[i];
@@ -264,9 +288,11 @@
       cats.forEach(function (b) {
         var r = b.budget > 0 ? b.spent / b.budget : (b.spent > 0 ? 1 : 0);
         var col = r >= 1 ? '#ef8080' : r >= 0.8 ? '#f5b971' : '#7fc8a9';
-        html += '<div class="cat"><div class="name">' + esc(label(b.category)) + '</div>'
+        html += '<div class="cat" onclick="openCatDetail(\'' + jstr(b.category) + '\')">'
+          + '<div class="name">' + esc(label(b.category)) + '</div>'
           + '<div class="cbar"><div style="width:' + Math.min(r * 100, 100) + '%;background:' + col + '"></div></div>'
-          + '<div class="num">' + yen(b.spent) + (b.budget > 0 ? ' / ' + yen(b.budget) : '') + '</div></div>';
+          + '<div class="num">' + yen(b.spent) + (b.budget > 0 ? ' / ' + yen(b.budget) : '') + '</div>'
+          + '<div class="chev">❯</div></div>';
       });
       html += '</div>';
     }
@@ -279,15 +305,19 @@
         lastDay = it.date;
         html += '<div class="day">' + dayLabel(it.date) + '</div>';
       }
-      html += '<div class="item"><div class="info"><div class="shop">' + esc(it.shop) + '</div>'
-        + '<div class="meta">' + esc(it.pay) + '・✏️手入力</div></div>'
-        + catSelect(it)
-        + '<div class="amt">' + yen(it.amount) + '</div>'
-        + '<button class="del" onclick="del(\'' + it.id + '\')">🗑</button></div>';
+      html += itemHtml(it, true);
     });
 
     document.getElementById('app').innerHTML = html;
     fillCatOptions();
+  }
+
+  function itemHtml(it, showCat) {
+    return '<div class="item"><div class="info"><div class="shop">' + esc(it.shop) + '</div>'
+      + '<div class="meta">' + esc(it.pay) + '</div></div>'
+      + (showCat ? catSelect(it) : '')
+      + '<div class="amt">' + yen(it.amount) + '</div>'
+      + '<button class="del" onclick="del(\'' + it.id + '\')">🗑</button></div>';
   }
 
   function donutHtml(d) {
@@ -309,7 +339,7 @@
         + 'stroke-dashoffset="' + (-acc).toFixed(2) + '" '
         + 'transform="rotate(-90 ' + cx + ' ' + cy + ')"></circle>';
       var pct = Math.round(frac * 100);
-      legend += '<div class="legrow"><span class="legdot" style="background:' + col + '"></span>'
+      legend += '<div class="legrow" style="cursor:pointer" onclick="openCatDetail(\'' + jstr(b.category) + '\')"><span class="legdot" style="background:' + col + '"></span>'
         + '<span class="legname">' + esc(label(b.category)) + '</span>'
         + '<span class="legpct">' + pct + '%</span>'
         + '<span class="legamt">' + yen(b.spent) + '</span></div>';
@@ -323,6 +353,87 @@
 
     return '<div class="card"><h2>今月の内訳</h2><div class="donutWrap">'
       + svg + '<div class="legend">' + legend + '</div></div></div>';
+  }
+
+  /* ---- カテゴリ詳細画面（月推移グラフ＋明細）---- */
+  var detailCat = null;
+  function monthsBack(n) {
+    var arr = [];
+    for (var i = n - 1; i >= 0; i--) {
+      var mm = mo - i, yy = y;
+      while (mm < 0) { mm += 12; yy--; }
+      arr.push({ mo: mm, ym: yy + '-' + ('0' + (mm + 1)).slice(-2), label: (mm + 1) + '月' });
+    }
+    return arr;
+  }
+  function catSpentInYm(cat, ym) {
+    var s = 0;
+    state.entries.forEach(function (e) {
+      if (e.category === cat && String(e.date).slice(0, 7) === ym) s += Number(e.amount);
+    });
+    return s;
+  }
+  function barChartSvg(cat) {
+    var months = monthsBack(6);
+    var vals = months.map(function (m) { return catSpentInYm(cat, m.ym); });
+    var maxV = Math.max.apply(null, vals.concat([1]));
+    var col = colorFor(cat);
+    var W = 340, H = 190, padT = 24, padB = 24, padX = 6;
+    var plotH = H - padT - padB, n = months.length;
+    var slot = (W - padX * 2) / n, bw = slot * 0.5;
+    var s = '<svg class="chartSvg" viewBox="0 0 ' + W + ' ' + H + '">';
+    s += '<line x1="' + padX + '" y1="' + (padT + plotH) + '" x2="' + (W - padX) + '" y2="' + (padT + plotH) + '" stroke="#f0dede" stroke-width="1"/>';
+    months.forEach(function (m, i) {
+      var h = maxV > 0 ? (vals[i] / maxV) * plotH : 0;
+      var x = padX + slot * i + (slot - bw) / 2;
+      var yb = padT + (plotH - h);
+      var cur = (m.ym === ymStr());
+      s += '<rect x="' + x.toFixed(1) + '" y="' + yb.toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + h.toFixed(1)
+        + '" rx="4" fill="' + col + '" opacity="' + (cur ? 1 : 0.5) + '"/>';
+      if (vals[i] > 0) s += '<text x="' + (x + bw / 2).toFixed(1) + '" y="' + (yb - 5).toFixed(1) + '" text-anchor="middle" font-size="10" fill="#8a7a7a">' + Number(vals[i]).toLocaleString() + '</text>';
+      s += '<text x="' + (x + bw / 2).toFixed(1) + '" y="' + (H - 7) + '" text-anchor="middle" font-size="11" fill="' + (cur ? '#c98a9c' : '#b8a5a5') + '"' + (cur ? ' font-weight="700"' : '') + '>' + m.label + '</text>';
+    });
+    s += '</svg>';
+    return s;
+  }
+  function openCatDetail(cat) {
+    detailCat = cat;
+    var curYm = ymStr();
+    var total = catSpentInYm(cat, curYm);
+    document.getElementById('dTtl').textContent = label(cat);
+    document.getElementById('dSub').textContent = (mo + 1) + '月　' + yen(total);
+
+    var html = '<div class="card">' + barChartSvg(cat) + '</div>';
+
+    var items = state.entries.filter(function (e) {
+      return e.category === cat && String(e.date).slice(0, 7) === curYm;
+    });
+    items.sort(function (a, b) {
+      if (a.date !== b.date) return a.date < b.date ? 1 : -1;
+      return String(b.created_at || '').localeCompare(String(a.created_at || ''));
+    });
+
+    html += '<h2 style="margin-left:6px">明細（' + items.length + '件）</h2>';
+    if (!items.length) {
+      html += '<div class="dEmpty">この月の記録はありません</div>';
+    } else {
+      var lastDay = '', dayTotal = {};
+      items.forEach(function (it) { dayTotal[it.date] = (dayTotal[it.date] || 0) + Number(it.amount); });
+      items.forEach(function (it) {
+        if (it.date !== lastDay) {
+          lastDay = it.date;
+          html += '<div class="day">' + dayLabel(it.date) + '（' + yen(dayTotal[it.date]) + '）</div>';
+        }
+        html += itemHtml(it, false);
+      });
+    }
+    document.getElementById('dBody').innerHTML = html;
+    document.getElementById('dBody').scrollTop = 0;
+    document.getElementById('detail').classList.add('show');
+  }
+  function closeCatDetail() {
+    detailCat = null;
+    document.getElementById('detail').classList.remove('show');
   }
 
   function catSelect(it) {
@@ -346,6 +457,7 @@
     var res = await sb.from('entries').update({ category: cat }).eq('id', id);
     if (res.error) { alert('変更に失敗：' + res.error.message); return; }
     await refresh();
+    reopenDetailIfOpen();
   }
 
   async function del(id) {
@@ -353,6 +465,10 @@
     var res = await sb.from('entries').delete().eq('id', id);
     if (res.error) { alert('削除に失敗：' + res.error.message); return; }
     await refresh();
+    reopenDetailIfOpen();
+  }
+  function reopenDetailIfOpen() {
+    if (detailCat && document.getElementById('detail').classList.contains('show')) openCatDetail(detailCat);
   }
 
   /* ---- 追加シート ---- */
