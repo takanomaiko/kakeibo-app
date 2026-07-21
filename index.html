@@ -339,8 +339,9 @@
         + 'stroke-dashoffset="' + (-acc).toFixed(2) + '" '
         + 'transform="rotate(-90 ' + cx + ' ' + cy + ')"></circle>';
       var pct = Math.round(frac * 100);
+      var icon = emojiFor(b.category) || esc(b.category);
       legend += '<div class="legrow" style="cursor:pointer" onclick="openCatDetail(\'' + jstr(b.category) + '\')"><span class="legdot" style="background:' + col + '"></span>'
-        + '<span class="legname">' + esc(label(b.category)) + '</span>'
+        + '<span class="legname" style="font-size:16px">' + icon + '</span>'
         + '<span class="legpct">' + pct + '%</span>'
         + '<span class="legamt">' + yen(b.spent) + '</span></div>';
       acc += len;
