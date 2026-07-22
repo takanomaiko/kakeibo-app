@@ -67,6 +67,7 @@
   .setrow .setname { font-size: 14px; }
   .setrow input { width: 8em; border: 1.5px solid #f0d9dd; border-radius: 12px; padding: 8px 10px; font-size: 16px; text-align: right; background: #fffafb; color: #4a3f3f; }
   .settotal { font-size: 12px; color: #a08c8c; text-align: right; margin: 2px 2px 12px; }
+  .setnote { font-size: 12px; color: #c98a9c; background: #fff0f3; border-radius: 12px; padding: 8px 12px; margin-bottom: 12px; line-height: 1.5; }
   .empty { text-align: center; color: #b8a5a5; font-size: 13px; padding: 20px 0; }
 
   /* カテゴリ詳細画面 */
@@ -179,7 +180,7 @@
   var y = now.getFullYear(), mo = now.getMonth();
   var data = null;
   // ネットから取ってきたデータを一時的に持っておく箱
-  var state = { uid: null, entries: [], budgets: {} };
+  var state = { uid: null, entries: [], budgets: {}, mbudgets: {} };
 
   function ymStr() { return y + '-' + ('0' + (mo + 1)).slice(-2); }
   function yen(n) { return '¥' + Number(n).toLocaleString(); }
@@ -198,7 +199,16 @@
     return EXTRA_COLORS[(i || 0) % EXTRA_COLORS.length];
   }
   function label(name) { var e = emojiFor(name); return (e ? e + ' ' : '') + name; }
-  function budgetFor(name) {
+  function budgetFor(name, ym) {
+    ym = ym || ymStr();
+    // 月ごとの設定があれば「その月以前で一番新しい設定」を使う（＝設定した月から先に反映）
+    var arr = state.mbudgets && state.mbudgets[name];
+    if (arr && arr.length) {
+      var chosen = null;
+      for (var i = 0; i < arr.length; i++) { if (arr[i].month <= ym) chosen = arr[i].amount; else break; }
+      if (chosen !== null) return chosen;
+    }
+    // 月ごとの設定より前（過去）は、これまでの共通予算をそのまま使う
     if (name in state.budgets) return Number(state.budgets[name]);
     var c = catDef(name);
     return c ? c.budget : 0;
@@ -208,13 +218,24 @@
   async function fetchAll() {
     var res = await Promise.all([
       sb.from('entries').select('*'),
-      sb.from('budgets').select('*')
+      sb.from('budgets').select('*'),
+      sb.from('monthly_budgets').select('*')
     ]);
     if (res[0].error) throw res[0].error;
     if (res[1].error) throw res[1].error;
     state.entries = res[0].data || [];
     state.budgets = {};
     (res[1].data || []).forEach(function (r) { state.budgets[r.category] = r.amount; });
+    // 月ごとの予算（monthly_budgets テーブルが未作成でもアプリは動くように、エラーは無視）
+    state.mbudgets = {};
+    if (!res[2].error) {
+      (res[2].data || []).forEach(function (r) {
+        (state.mbudgets[r.category] = state.mbudgets[r.category] || []).push({ month: r.month, amount: Number(r.amount) });
+      });
+      Object.keys(state.mbudgets).forEach(function (k) {
+        state.mbudgets[k].sort(function (a, b) { return a.month < b.month ? -1 : 1; });
+      });
+    }
   }
   async function refresh() {
     document.getElementById('app').innerHTML = '<div class="empty">読み込み中…♪</div>';
@@ -235,13 +256,13 @@
       totalSpent += Number(it.amount);
     });
     var budgets = CATEGORIES.map(function (c) {
-      return { category: c.name, budget: budgetFor(c.name), spent: spentBy[c.name] || 0 };
+      return { category: c.name, budget: budgetFor(c.name, ym), spent: spentBy[c.name] || 0 };
     });
     Object.keys(spentBy).forEach(function (name) {
       if (!catDef(name)) budgets.push({ category: name, budget: 0, spent: spentBy[name] });
     });
     return {
-      totalBudget: CATEGORIES.reduce(function (s, c) { return s + budgetFor(c.name); }, 0),
+      totalBudget: CATEGORIES.reduce(function (s, c) { return s + budgetFor(c.name, ym); }, 0),
       totalSpent: totalSpent,
       budgets: budgets,
       categories: CATEGORIES.map(function (c) { return c.name; }),
@@ -516,9 +537,11 @@
 
   /* ---- 予算の設定シート ---- */
   function openSettings() {
-    var h = '<h3>⚙️ 予算の設定（1ヶ月あたり）</h3><div class="setlist">';
+    var h = '<h3>⚙️ 予算の設定（1ヶ月あたり）</h3>';
+    h += '<div class="setnote">📅 <b>' + y + '年' + (mo + 1) + '月から先</b>に反映されます（過去の月は変わりません）</div>';
+    h += '<div class="setlist">';
     CATEGORIES.forEach(function (c) {
-      var val = (c.name in state.budgets) ? state.budgets[c.name] : c.budget;
+      var val = budgetFor(c.name, ymStr());
       h += '<div class="setrow"><span class="setname">' + esc(label(c.name)) + '</span>'
         + '<input type="number" inputmode="numeric" data-cat="' + esc(c.name) + '" value="' + val + '"></div>';
     });
@@ -539,15 +562,24 @@
     document.getElementById('setTotal').textContent = '合計予算：' + yen(sum) + ' / 月';
   }
   async function saveSettings() {
+    var ym = ymStr();
     var rows = [];
     document.querySelectorAll('#setSheet input[data-cat]').forEach(function (inp) {
-      rows.push({ user_id: state.uid, category: inp.getAttribute('data-cat'), amount: Number(inp.value) || 0 });
+      rows.push({ user_id: state.uid, category: inp.getAttribute('data-cat'), month: ym, amount: Number(inp.value) || 0 });
     });
     var btn = document.getElementById('setSaveBtn');
     btn.disabled = true; btn.textContent = '保存中…';
-    var res = await sb.from('budgets').upsert(rows, { onConflict: 'user_id,category' });
+    var res = await sb.from('monthly_budgets').upsert(rows, { onConflict: 'user_id,category,month' });
     btn.disabled = false; btn.textContent = '保存する';
-    if (res.error) { alert('保存に失敗：' + res.error.message); return; }
+    if (res.error) {
+      var m = String(res.error.message || '');
+      if (/monthly_budgets/.test(m) || /relation|does not exist|schema cache/.test(m)) {
+        alert('予算の保存先テーブル（monthly_budgets）がまだ作られていないようです。準備の手順を確認してください🙏');
+      } else {
+        alert('保存に失敗：' + m);
+      }
+      return;
+    }
     closeSettings();
     await refresh();
   }
@@ -643,7 +675,7 @@
   }
   async function doLogout() {
     await sb.auth.signOut();
-    state = { uid: null, entries: [], budgets: {} };
+    state = { uid: null, entries: [], budgets: {}, mbudgets: {} };
     closeSettings();
     document.body.classList.remove('signed-in');
   }
