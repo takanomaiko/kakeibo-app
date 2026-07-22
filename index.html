@@ -83,6 +83,9 @@
   .dBody { flex: 1; overflow-y: auto; padding: 14px; max-width: 560px; margin: 0 auto; width: 100%; }
   .chartSvg { width: 100%; height: auto; display: block; }
   .dEmpty { text-align: center; color: #b8a5a5; font-size: 13px; padding: 24px 0; }
+  /* 編集シートは詳細画面(z40)より上に出す */
+  #editOverlay { z-index: 45; }
+  #editSheet { z-index: 46; }
 
   /* ログイン画面 */
   #login { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; padding: 24px; background: linear-gradient(160deg, #ffe3ea, #fff7f5); z-index: 50; }
@@ -148,6 +151,10 @@
 <!-- まとめて取り込みシート -->
 <div id="impOverlay" class="overlay" onclick="closeImport()"></div>
 <div id="impSheet" class="sheet"></div>
+
+<!-- 明細の編集シート -->
+<div id="editOverlay" class="overlay" onclick="closeEdit()"></div>
+<div id="editSheet" class="sheet"></div>
 
 <!-- Supabase のライブラリを読み込み -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -446,7 +453,7 @@
           lastDay = it.date;
           html += '<div class="day">' + dayLabel(it.date) + '（' + yen(dayTotal[it.date]) + '）</div>';
         }
-        html += itemHtml(it, false);
+        html += itemRowEditable(it);
       });
     }
     document.getElementById('dBody').innerHTML = html;
@@ -456,6 +463,70 @@
   function closeCatDetail() {
     detailCat = null;
     document.getElementById('detail').classList.remove('show');
+  }
+
+  /* ---- 明細の編集シート（詳細画面からタップで開く）---- */
+  function itemRowEditable(it) {
+    return '<div class="item" style="cursor:pointer" onclick="openEdit(\'' + jstr(it.id) + '\')">'
+      + '<div class="info"><div class="shop">' + esc(it.shop) + '</div>'
+      + '<div class="meta">' + esc(label(it.category)) + '・' + esc(it.pay) + '</div></div>'
+      + '<div class="amt">' + yen(it.amount) + '</div>'
+      + '<div class="chev" style="margin-left:6px">✏️</div></div>';
+  }
+  function openEdit(id) {
+    var it = state.entries.filter(function (e) { return e.id === id; })[0];
+    if (!it) return;
+    var cats = CATEGORIES.map(function (c) { return c.name; });
+    if (cats.indexOf(it.category) === -1) cats.push(it.category);
+    var catOpts = cats.map(function (c) {
+      return '<option value="' + esc(c) + '"' + (c === it.category ? ' selected' : '') + '>' + esc(label(c)) + '</option>';
+    }).join('');
+    var pays = ['現金', 'カード', '電子マネー', 'その他'];
+    if (pays.indexOf(it.pay) === -1) pays.unshift(it.pay);
+    var payOpts = pays.map(function (p) {
+      return '<option' + (p === it.pay ? ' selected' : '') + '>' + esc(p) + '</option>';
+    }).join('');
+    var h = '<h3>✏️ 記録を編集</h3>'
+      + '<div class="row2">'
+      + '<div class="field"><label>金額（円）</label><input type="number" id="e_amount" inputmode="numeric" value="' + esc(it.amount) + '"></div>'
+      + '<div class="field"><label>日付</label><input type="date" id="e_date" value="' + esc(String(it.date).slice(0, 10)) + '"></div>'
+      + '</div>'
+      + '<div class="field"><label>内容・お店</label><input type="text" id="e_shop" value="' + esc(it.shop) + '"></div>'
+      + '<div class="row2">'
+      + '<div class="field"><label>カテゴリ</label><select id="e_cat">' + catOpts + '</select></div>'
+      + '<div class="field"><label>支払方法</label><select id="e_pay">' + payOpts + '</select></div>'
+      + '</div>'
+      + '<button class="primaryBtn" id="editSaveBtn" onclick="saveEdit(\'' + jstr(id) + '\')">保存する</button>'
+      + '<button class="linkBtn" onclick="delFromEdit(\'' + jstr(id) + '\')">🗑 この記録を削除</button>';
+    document.getElementById('editSheet').innerHTML = h;
+    document.getElementById('editOverlay').className = 'overlay show';
+    document.getElementById('editSheet').style.display = 'block';
+  }
+  function closeEdit() {
+    document.getElementById('editOverlay').className = 'overlay';
+    document.getElementById('editSheet').style.display = 'none';
+  }
+  async function saveEdit(id) {
+    var amount = Number(document.getElementById('e_amount').value);
+    if (!(amount > 0)) { alert('金額を入れてください'); return; }
+    var btn = document.getElementById('editSaveBtn');
+    btn.disabled = true; btn.textContent = '保存中…';
+    var res = await sb.from('entries').update({
+      date: document.getElementById('e_date').value,
+      amount: Math.round(amount),
+      shop: document.getElementById('e_shop').value || '（無題）',
+      category: document.getElementById('e_cat').value,
+      pay: document.getElementById('e_pay').value
+    }).eq('id', id);
+    btn.disabled = false; btn.textContent = '保存する';
+    if (res.error) { alert('保存に失敗：' + res.error.message); return; }
+    closeEdit();
+    await refresh();
+    reopenDetailIfOpen();
+  }
+  async function delFromEdit(id) {
+    closeEdit();
+    await del(id);
   }
 
   function catSelect(it) {
