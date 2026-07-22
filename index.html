@@ -45,7 +45,7 @@
   .item .meta { font-size: 11px; color: #b8a5a5; }
   .item select { border: 1px solid #f0d9dd; background: #fff8fa; border-radius: 8px; font-size: 11px; padding: 3px 2px; color: #c98a9c; max-width: 7.5em; }
   .item .amt { font-size: 15px; font-weight: 700; white-space: nowrap; }
-  .item .del { border: none; background: none; color: #d9bcbc; font-size: 15px; cursor: pointer; padding: 4px; }
+  .item .del { border: none; background: none; color: #e0d2d2; font-size: 14px; cursor: pointer; padding: 4px 2px; }
   #fab { position: fixed; right: 20px; bottom: 24px; width: 58px; height: 58px; border-radius: 50%; border: none; background: linear-gradient(135deg, #ffb3c6, #ff8fab); color: #fff; font-size: 30px; line-height: 1; box-shadow: 0 4px 14px rgba(255,143,171,.5); cursor: pointer; z-index: 20; }
   .overlay { position: fixed; inset: 0; background: rgba(80,60,60,.35); display: none; z-index: 30; }
   .overlay.show { display: block; }
@@ -345,7 +345,7 @@
       + '<div class="meta">' + esc(it.pay) + '</div></div>'
       + (showCat ? catSelect(it) : '')
       + '<div class="amt">' + yen(it.amount) + '</div>'
-      + '<button class="del" onclick="del(\'' + it.id + '\')">🗑</button></div>';
+      + '<button class="del" onclick="del(\'' + it.id + '\')">✕</button></div>';
   }
 
   function donutHtml(d) {
@@ -497,7 +497,7 @@
       + '<div class="field"><label>支払方法</label><select id="e_pay">' + payOpts + '</select></div>'
       + '</div>'
       + '<button class="primaryBtn" id="editSaveBtn" onclick="saveEdit(\'' + jstr(id) + '\')">保存する</button>'
-      + '<button class="linkBtn" onclick="delFromEdit(\'' + jstr(id) + '\')">🗑 この記録を削除</button>';
+      + '<button class="linkBtn" onclick="delFromEdit(\'' + jstr(id) + '\')">✕ この記録を削除</button>';
     document.getElementById('editSheet').innerHTML = h;
     document.getElementById('editOverlay').className = 'overlay show';
     document.getElementById('editSheet').style.display = 'block';
