@@ -86,6 +86,16 @@
   /* 編集シートは詳細画面(z40)より上に出す */
   #editOverlay { z-index: 45; }
   #editSheet { z-index: 46; }
+  /* 費目の編集シートは費目一覧シートより上に出す */
+  #catEditOverlay { z-index: 47; }
+  #catEditSheet { z-index: 48; }
+  .catrow { display: flex; align-items: center; gap: 10px; padding: 10px 2px; cursor: pointer; border-bottom: 1px solid #f6e9e9; }
+  .catrow .cemoji { font-size: 20px; width: 1.5em; text-align: center; }
+  .catrow .cname { flex: 1; font-size: 14px; }
+  .catrow .cdot { width: 14px; height: 14px; border-radius: 4px; flex-shrink: 0; }
+  .swatches { display: flex; flex-wrap: wrap; gap: 10px; padding: 2px 0; }
+  .swatch { width: 30px; height: 30px; border-radius: 50%; cursor: pointer; border: 3px solid transparent; }
+  .swatch.sel { border-color: #fff; box-shadow: 0 0 0 2px #c98a9c; }
 
   /* ログイン画面 */
   #login { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; padding: 24px; background: linear-gradient(160deg, #ffe3ea, #fff7f5); z-index: 50; }
@@ -156,6 +166,12 @@
 <div id="editOverlay" class="overlay" onclick="closeEdit()"></div>
 <div id="editSheet" class="sheet"></div>
 
+<!-- 費目の管理シート -->
+<div id="catOverlay" class="overlay" onclick="closeCatManager()"></div>
+<div id="catSheet" class="sheet"></div>
+<div id="catEditOverlay" class="overlay" onclick="closeCatEdit()"></div>
+<div id="catEditSheet" class="sheet"></div>
+
 <!-- Supabase のライブラリを読み込み -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
@@ -170,7 +186,7 @@
      ▼▼▼ 費目（カテゴリ）と絵文字の設定 ▼▼▼
      ・budget は「初期値」。実際の予算は ⚙️ 設定画面で変更できます
      ============================================================ */
-  var CATEGORIES = [
+  var DEFAULT_CATEGORIES = [
     { name: '食費・日用品',   emoji: '🛒', budget: 40000, color: '#ff8fab' },
     { name: '教育費',        emoji: '📚', budget: 10000, color: '#ffc4a3' },
     { name: '外食',          emoji: '🍽️', budget: 15000, color: '#ffd670' },
@@ -182,6 +198,15 @@
     { name: '激ヤバ',        emoji: '💸', budget: 0,     color: '#ff6b6b' }
   ];
   /* ▲▲▲ 設定はここまで ▲▲▲ */
+  // 実際に使う費目リスト。Supabaseの categories テーブルがあればそれで上書きされる
+  function cloneDefaults() {
+    return DEFAULT_CATEGORIES.map(function (c, i) {
+      return { name: c.name, emoji: c.emoji, color: c.color, budget: c.budget, sort: i };
+    });
+  }
+  var CATEGORIES = cloneDefaults();
+  // 色えらびのパレット（かわいいパステル系）
+  var PALETTE = ['#ff8fab', '#ffc4a3', '#ffd670', '#c3a6ff', '#8fd3c8', '#f5a3c7', '#a3c9ff', '#b5e0a0', '#ff6b6b', '#f7a072', '#9ad0e0', '#e0b0d0', '#b0c0a0', '#c9b6a0'];
 
   var now = new Date();
   var y = now.getFullYear(), mo = now.getMonth();
@@ -226,7 +251,8 @@
     var res = await Promise.all([
       sb.from('entries').select('*'),
       sb.from('budgets').select('*'),
-      sb.from('monthly_budgets').select('*')
+      sb.from('monthly_budgets').select('*'),
+      sb.from('categories').select('*')
     ]);
     if (res[0].error) throw res[0].error;
     if (res[1].error) throw res[1].error;
@@ -242,6 +268,26 @@
       Object.keys(state.mbudgets).forEach(function (k) {
         state.mbudgets[k].sort(function (a, b) { return a.month < b.month ? -1 : 1; });
       });
+    }
+    // 費目（categories テーブル）。未作成ならデフォルトのまま動く
+    if (!res[3].error) {
+      var rows = res[3].data || [];
+      if (rows.length) {
+        rows.sort(function (a, b) { return (a.sort || 0) - (b.sort || 0); });
+        CATEGORIES = rows.map(function (r) {
+          return { name: r.name, emoji: r.emoji || '', color: r.color || '#ff8fab', budget: Number(r.budget) || 0, sort: r.sort || 0 };
+        });
+      } else {
+        // テーブルはあるが空 → デフォルト費目を一度だけ登録する
+        CATEGORIES = cloneDefaults();
+        try {
+          await sb.from('categories').insert(CATEGORIES.map(function (c) {
+            return { user_id: state.uid, name: c.name, emoji: c.emoji, color: c.color, budget: c.budget, sort: c.sort };
+          }));
+        } catch (e) { /* 失敗してもデフォルトのまま動く */ }
+      }
+    } else {
+      CATEGORIES = cloneDefaults();
     }
   }
   async function refresh() {
@@ -618,6 +664,7 @@
     });
     h += '</div><div class="settotal" id="setTotal"></div>';
     h += '<button class="primaryBtn" id="setSaveBtn" onclick="saveSettings()">保存する</button>';
+    h += '<button class="linkBtn" onclick="openCatManager()">🏷 費目を編集（追加・名前・色）</button>';
     h += '<button class="linkBtn" onclick="openImport()">📥 データをまとめて取り込み</button>';
     h += '<button class="linkBtn" onclick="doLogout()">ログアウト</button>';
     var el = document.getElementById('setSheet');
@@ -658,6 +705,112 @@
     document.getElementById('setOverlay').className = 'overlay';
     document.getElementById('setSheet').style.display = 'none';
   }
+
+  /* ---- 費目の管理（追加・名前・アイコン・色・削除）---- */
+  function openCatManager() {
+    closeSettings();
+    var h = '<h3>🏷 費目の編集</h3><div class="setlist">';
+    CATEGORIES.forEach(function (c) {
+      h += '<div class="catrow" onclick="openCatEdit(\'' + jstr(c.name) + '\')">'
+        + '<span class="cemoji">' + (c.emoji || '🏷') + '</span>'
+        + '<span class="cname">' + esc(c.name) + '</span>'
+        + '<span class="cdot" style="background:' + (c.color || '#ccc') + '"></span>'
+        + '<span class="chev">❯</span></div>';
+    });
+    h += '</div>';
+    h += '<button class="primaryBtn" onclick="openCatEdit(null)">＋ 新しい費目を追加</button>';
+    h += '<button class="linkBtn" onclick="closeCatManager()">とじる</button>';
+    document.getElementById('catSheet').innerHTML = h;
+    document.getElementById('catOverlay').className = 'overlay show';
+    document.getElementById('catSheet').style.display = 'block';
+  }
+  function closeCatManager() {
+    document.getElementById('catOverlay').className = 'overlay';
+    document.getElementById('catSheet').style.display = 'none';
+  }
+
+  var catEditOrig = null, catEditColor = null;
+  function openCatEdit(origName) {
+    catEditOrig = origName;
+    var c = origName ? catDef(origName) : null;
+    catEditColor = c ? (c.color || PALETTE[0]) : PALETTE[0];
+    var h = '<h3>' + (origName ? '✏️ 費目を編集' : '➕ 費目を追加') + '</h3>';
+    h += '<div class="row2">';
+    h += '<div class="field" style="flex:0 0 4.5em"><label>アイコン</label><input type="text" id="c_emoji" value="' + (c ? esc(c.emoji) : '') + '" placeholder="🛒" style="text-align:center"></div>';
+    h += '<div class="field"><label>費目の名前</label><input type="text" id="c_name" value="' + (c ? esc(c.name) : '') + '" placeholder="例：水道光熱費"></div>';
+    h += '</div>';
+    h += '<div class="field"><label>色</label><div class="swatches" id="c_swatches">';
+    PALETTE.forEach(function (col) {
+      h += '<div class="swatch' + (col === catEditColor ? ' sel' : '') + '" style="background:' + col + '" data-col="' + col + '" onclick="pickCatColor(\'' + col + '\')"></div>';
+    });
+    h += '</div></div>';
+    h += '<button class="primaryBtn" id="catSaveBtn" onclick="saveCat()">保存する</button>';
+    if (origName) h += '<button class="linkBtn" onclick="deleteCat()">✕ この費目を削除</button>';
+    document.getElementById('catEditSheet').innerHTML = h;
+    document.getElementById('catEditOverlay').className = 'overlay show';
+    document.getElementById('catEditSheet').style.display = 'block';
+  }
+  function pickCatColor(col) {
+    catEditColor = col;
+    document.querySelectorAll('#c_swatches .swatch').forEach(function (s) {
+      s.className = 'swatch' + (s.getAttribute('data-col') === col ? ' sel' : '');
+    });
+  }
+  function closeCatEdit() {
+    document.getElementById('catEditOverlay').className = 'overlay';
+    document.getElementById('catEditSheet').style.display = 'none';
+  }
+  async function saveCat() {
+    var name = document.getElementById('c_name').value.trim();
+    var emoji = document.getElementById('c_emoji').value.trim();
+    var color = catEditColor;
+    if (!name) { alert('費目の名前を入れてください'); return; }
+    if (CATEGORIES.some(function (c) { return c.name === name && c.name !== catEditOrig; })) {
+      alert('同じ名前の費目がすでにあります'); return;
+    }
+    var btn = document.getElementById('catSaveBtn');
+    btn.disabled = true; btn.textContent = '保存中…';
+    try {
+      if (!catEditOrig) {
+        var maxSort = CATEGORIES.reduce(function (m, c) { return Math.max(m, c.sort || 0); }, 0);
+        throwIf(await sb.from('categories').upsert([{ user_id: state.uid, name: name, emoji: emoji, color: color, budget: 0, sort: maxSort + 1 }], { onConflict: 'user_id,name' }));
+      } else if (name === catEditOrig) {
+        throwIf(await sb.from('categories').update({ emoji: emoji, color: color }).eq('name', catEditOrig));
+      } else {
+        // 名前変更：既存の明細・予算もまとめて新しい名前に付け替える
+        throwIf(await sb.from('entries').update({ category: name }).eq('category', catEditOrig));
+        throwIf(await sb.from('budgets').update({ category: name }).eq('category', catEditOrig));
+        throwIf(await sb.from('monthly_budgets').update({ category: name }).eq('category', catEditOrig));
+        var old = catDef(catEditOrig) || { budget: 0, sort: 0 };
+        throwIf(await sb.from('categories').upsert([{ user_id: state.uid, name: name, emoji: emoji, color: color, budget: old.budget || 0, sort: old.sort || 0 }], { onConflict: 'user_id,name' }));
+        throwIf(await sb.from('categories').delete().eq('name', catEditOrig));
+      }
+    } catch (e) {
+      btn.disabled = false; btn.textContent = '保存する';
+      var m = String(e.message || e);
+      if (/categories/.test(m) || /does not exist|schema cache|relation/.test(m)) {
+        alert('費目テーブル（categories）がまだ作られていないようです。準備の手順を確認してください🙏');
+      } else { alert('保存に失敗：' + m); }
+      return;
+    }
+    btn.disabled = false; btn.textContent = '保存する';
+    closeCatEdit();
+    await refresh();
+    openCatManager();
+  }
+  async function deleteCat() {
+    var name = catEditOrig;
+    var used = state.entries.filter(function (e) { return e.category === name; }).length;
+    var msg = '「' + name + '」を削除しますか？';
+    if (used) msg += '\n（この費目の明細が' + used + '件あります。明細は残りますが、色やアイコンは外れます）';
+    if (!confirm(msg)) return;
+    var res = await sb.from('categories').delete().eq('name', name);
+    if (res.error) { alert('削除に失敗：' + res.error.message); return; }
+    closeCatEdit();
+    await refresh();
+    openCatManager();
+  }
+  function throwIf(res) { if (res && res.error) throw res.error; return res; }
 
   /* ---- まとめて取り込みシート ---- */
   function openImport() {
