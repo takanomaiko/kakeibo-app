@@ -258,7 +258,8 @@
     ]);
     if (res[0].error) throw res[0].error;
     if (res[1].error) throw res[1].error;
-    state.entries = res[0].data || [];
+    // 削除済み（deleted）の明細は表示しない。※列が未追加でも動くように client 側で除外
+    state.entries = (res[0].data || []).filter(function (e) { return !e.deleted; });
     state.budgets = {};
     (res[1].data || []).forEach(function (r) { state.budgets[r.category] = r.amount; });
     // 月ごとの予算（monthly_budgets テーブルが未作成でもアプリは動くように、エラーは無視）
@@ -603,8 +604,15 @@
 
   async function del(id) {
     if (!confirm('この記録を削除しますか？')) return;
-    var res = await sb.from('entries').delete().eq('id', id);
-    if (res.error) { alert('削除に失敗：' + res.error.message); return; }
+    // 本当に消さず「削除済み」の印をつける（＝メールから再取り込みされるのを防ぐ）
+    var res = await sb.from('entries').update({ deleted: true }).eq('id', id);
+    if (res.error) {
+      var m = String(res.error.message || '');
+      if (/deleted/.test(m) || /column|schema cache/.test(m)) {
+        alert('削除の準備（entries に deleted 列を追加）がまだのようです。手順を確認してください🙏');
+      } else { alert('削除に失敗：' + m); }
+      return;
+    }
     await refresh();
     reopenDetailIfOpen();
   }
