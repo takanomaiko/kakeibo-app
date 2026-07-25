@@ -46,6 +46,7 @@
   .item select { border: 1px solid #f0d9dd; background: #fff8fa; border-radius: 8px; font-size: 11px; padding: 3px 2px; color: #c98a9c; max-width: 7.5em; }
   .item .amt { font-size: 15px; font-weight: 700; white-space: nowrap; }
   .item .del { border: none; background: none; color: #e0d2d2; font-size: 14px; cursor: pointer; padding: 4px 2px; }
+  .memohint { color: #cbb6b6; }
   #fab { position: fixed; right: 20px; bottom: 24px; width: 58px; height: 58px; border-radius: 50%; border: none; background: linear-gradient(135deg, #ffb3c6, #ff8fab); color: #fff; font-size: 30px; line-height: 1; box-shadow: 0 4px 14px rgba(255,143,171,.5); cursor: pointer; z-index: 20; }
   .overlay { position: fixed; inset: 0; background: rgba(80,60,60,.35); display: none; z-index: 30; }
   .overlay.show { display: block; }
@@ -149,10 +150,8 @@
     <div class="field"><label>日付</label><input type="date" id="f_date"></div>
   </div>
   <div class="field"><label>内容・お店</label><input type="text" id="f_shop" placeholder="スーパーで買い物 など"></div>
-  <div class="row2">
-    <div class="field"><label>カテゴリ</label><select id="f_cat"></select></div>
-    <div class="field"><label>支払方法</label><select id="f_pay"><option>現金</option><option>カード</option><option>電子マネー</option><option>その他</option></select></div>
-  </div>
+  <div class="field"><label>カテゴリ</label><select id="f_cat"></select></div>
+  <div class="field"><label>メモ（買ったもの・誰と など／任意）</label><input type="text" id="f_memo" placeholder="○○とランチ など"></div>
   <button class="primaryBtn" id="saveBtn" onclick="save()">追加する</button>
 </div>
 
@@ -382,19 +381,22 @@
         lastDay = it.date;
         html += '<div class="day">' + dayLabel(it.date) + '</div>';
       }
-      html += itemHtml(it, true);
+      html += itemHtml(it);
     });
 
     document.getElementById('app').innerHTML = html;
     fillCatOptions();
   }
 
-  function itemHtml(it, showCat) {
-    return '<div class="item"><div class="info"><div class="shop">' + esc(it.shop) + '</div>'
-      + '<div class="meta">' + esc(it.pay) + '</div></div>'
-      + (showCat ? catSelect(it) : '')
+  function itemHtml(it) {
+    var em = emojiFor(it.category);
+    var memo = it.memo ? esc(it.memo) : '<span class="memohint">＋メモ</span>';
+    return '<div class="item" style="cursor:pointer" onclick="openEdit(\'' + jstr(it.id) + '\')">'
+      + '<div class="info"><div class="shop">' + (em ? em + ' ' : '') + esc(it.shop) + '</div>'
+      + '<div class="meta">' + memo + '</div></div>'
       + '<div class="amt">' + yen(it.amount) + '</div>'
-      + '<button class="del" onclick="del(\'' + it.id + '\')">✕</button></div>';
+      + '<span class="chev" style="margin:0 4px">✏️</span>'
+      + '<button class="del" onclick="event.stopPropagation();del(\'' + it.id + '\')">✕</button></div>';
   }
 
   function donutHtml(d) {
@@ -516,9 +518,10 @@
 
   /* ---- 明細の編集シート（詳細画面からタップで開く）---- */
   function itemRowEditable(it) {
+    var memo = it.memo ? esc(it.memo) : '<span class="memohint">＋メモ</span>';
     return '<div class="item" style="cursor:pointer" onclick="openEdit(\'' + jstr(it.id) + '\')">'
       + '<div class="info"><div class="shop">' + esc(it.shop) + '</div>'
-      + '<div class="meta">' + esc(label(it.category)) + '・' + esc(it.pay) + '</div></div>'
+      + '<div class="meta">' + memo + '</div></div>'
       + '<div class="amt">' + yen(it.amount) + '</div>'
       + '<div class="chev" style="margin-left:6px">✏️</div></div>';
   }
@@ -541,9 +544,10 @@
       + '<div class="field"><label>日付</label><input type="date" id="e_date" value="' + esc(String(it.date).slice(0, 10)) + '"></div>'
       + '</div>'
       + '<div class="field"><label>内容・お店</label><input type="text" id="e_shop" value="' + esc(it.shop) + '"></div>'
+      + '<div class="field"><label>メモ（買ったもの・誰と など／任意）</label><input type="text" id="e_memo" value="' + esc(it.memo || '') + '" placeholder="○○とランチ など"></div>'
       + '<div class="row2">'
       + '<div class="field"><label>カテゴリ</label><select id="e_cat">' + catOpts + '</select></div>'
-      + '<div class="field"><label>支払方法</label><select id="e_pay">' + payOpts + '</select></div>'
+      + '<div class="field"><label>支払・カード</label><select id="e_pay">' + payOpts + '</select></div>'
       + '</div>'
       + '<button class="primaryBtn" id="editSaveBtn" onclick="saveEdit(\'' + jstr(id) + '\')">保存する</button>'
       + '<button class="linkBtn" onclick="delFromEdit(\'' + jstr(id) + '\')">✕ この記録を削除</button>';
@@ -565,6 +569,7 @@
       amount: Math.round(amount),
       shop: document.getElementById('e_shop').value || '（無題）',
       category: document.getElementById('e_cat').value,
+      memo: document.getElementById('e_memo').value || '',
       pay: document.getElementById('e_pay').value
     }).eq('id', id);
     btn.disabled = false; btn.textContent = '保存する';
@@ -626,6 +631,8 @@
     document.getElementById('f_date').value = t.getFullYear() + '-' + ('0' + (t.getMonth() + 1)).slice(-2) + '-' + ('0' + t.getDate()).slice(-2);
     document.getElementById('f_amount').value = '';
     document.getElementById('f_shop').value = '';
+    document.getElementById('f_memo').value = '';
+    fillCatOptions();
     document.getElementById('overlay').className = 'overlay show';
     document.getElementById('sheet').style.display = 'block';
   }
@@ -635,7 +642,8 @@
   }
   function fillCatOptions() {
     var sel = document.getElementById('f_cat');
-    if (!data || sel.options.length) return;
+    if (!data) return;
+    sel.innerHTML = '';
     data.categories.forEach(function (c) {
       var o = document.createElement('option');
       o.value = c;
@@ -654,7 +662,8 @@
       amount: amount,
       shop: document.getElementById('f_shop').value || '（無題）',
       category: document.getElementById('f_cat').value,
-      pay: document.getElementById('f_pay').value
+      memo: document.getElementById('f_memo').value || '',
+      pay: ''
     });
     btn.disabled = false; btn.textContent = '追加する';
     if (res.error) { alert('保存に失敗：' + res.error.message); return; }
