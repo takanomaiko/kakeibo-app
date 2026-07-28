@@ -216,8 +216,10 @@
      （他のカードを足したいときはこの表に行を追加）
      ============================================================ */
   var CARD_COLORS = [
-    ['Olive',   '#4a90d9'],   // Oliveゴールド → 青いマル
-    ['三井住友', '#4caf8e']    // 三井住友カード → 緑のマル
+    ['Amazonマスター', '#a5744e'],  // Amazonマスターカード → 茶色のマル
+    ['Amazon Master', '#a5744e'],   // 〃（英語表記のとき）
+    ['Olive',   '#4a90d9'],         // Oliveゴールド → 青いマル
+    ['三井住友', '#4caf8e']          // 三井住友カード → 緑のマル
   ];
   function cardColor(pay) {
     var p = String(pay || '').normalize('NFKC').toUpperCase();
