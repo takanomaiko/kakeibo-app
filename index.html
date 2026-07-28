@@ -47,6 +47,7 @@
   .item .amt { font-size: 15px; font-weight: 700; white-space: nowrap; }
   .item .del { border: none; background: none; color: #e0d2d2; font-size: 14px; cursor: pointer; padding: 4px 2px; }
   .editcue { font-size: 11px; opacity: 0.4; filter: grayscale(0.7); margin: 0 2px; flex-shrink: 0; }
+  .carddot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0; margin-right: 6px; opacity: 0.85; }
   #fab { position: fixed; right: 20px; bottom: 24px; width: 58px; height: 58px; border-radius: 50%; border: none; background: linear-gradient(135deg, #ffb3c6, #ff8fab); color: #fff; font-size: 30px; line-height: 1; box-shadow: 0 4px 14px rgba(255,143,171,.5); cursor: pointer; z-index: 20; }
   .overlay { position: fixed; inset: 0; background: rgba(80,60,60,.35); display: none; z-index: 30; }
   .overlay.show { display: block; }
@@ -208,6 +209,27 @@
   var CATEGORIES = cloneDefaults();
   // 色えらびのパレット（かわいいパステル系）
   var PALETTE = ['#ff8fab', '#ffc4a3', '#ffd670', '#c3a6ff', '#8fd3c8', '#f5a3c7', '#a3c9ff', '#b5e0a0', '#ff6b6b', '#f7a072', '#9ad0e0', '#e0b0d0', '#b0c0a0', '#c9b6a0'];
+
+  /* ============================================================
+     ▼▼▼ カード → 色マルの設定 ▼▼▼
+     支払・カード名に「キーワード」が含まれていたら、その色の小さなマルを表示
+     （他のカードを足したいときはこの表に行を追加）
+     ============================================================ */
+  var CARD_COLORS = [
+    ['Olive',   '#4a90d9'],   // Oliveゴールド → 青いマル
+    ['三井住友', '#4caf8e']    // 三井住友カード → 緑のマル
+  ];
+  function cardColor(pay) {
+    var p = String(pay || '').normalize('NFKC').toUpperCase();
+    for (var i = 0; i < CARD_COLORS.length; i++) {
+      if (p.indexOf(String(CARD_COLORS[i][0]).normalize('NFKC').toUpperCase()) !== -1) return CARD_COLORS[i][1];
+    }
+    return '';
+  }
+  function cardDot(pay) {
+    var c = cardColor(pay);
+    return c ? '<span class="carddot" style="background:' + c + '"></span>' : '';
+  }
 
   var now = new Date();
   var y = now.getFullYear(), mo = now.getMonth();
@@ -393,6 +415,7 @@
     var memo = it.memo ? '<div class="meta">' + esc(it.memo) + '</div>' : '';
     return '<div class="item" style="cursor:pointer" onclick="openEdit(\'' + jstr(it.id) + '\')">'
       + '<div class="info"><div class="shop">' + (em ? em + ' ' : '') + esc(it.shop) + '</div>' + memo + '</div>'
+      + cardDot(it.pay)
       + '<div class="amt">' + yen(it.amount) + '</div>'
       + '<span class="editcue">✏️</span>'
       + '<button class="del" onclick="event.stopPropagation();del(\'' + it.id + '\')">✕</button></div>';
@@ -520,6 +543,7 @@
     var memo = it.memo ? '<div class="meta">' + esc(it.memo) + '</div>' : '';
     return '<div class="item" style="cursor:pointer" onclick="openEdit(\'' + jstr(it.id) + '\')">'
       + '<div class="info"><div class="shop">' + esc(it.shop) + '</div>' + memo + '</div>'
+      + cardDot(it.pay)
       + '<div class="amt">' + yen(it.amount) + '</div>'
       + '<span class="editcue">✏️</span></div>';
   }
