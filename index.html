@@ -47,7 +47,7 @@
   .item .amt { font-size: 15px; font-weight: 700; white-space: nowrap; }
   .item .del { border: none; background: none; color: #e0d2d2; font-size: 14px; cursor: pointer; padding: 4px 2px; }
   .editcue { font-size: 11px; opacity: 0.4; filter: grayscale(0.7); margin: 0 2px; flex-shrink: 0; }
-  .carddot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0; margin-right: 6px; opacity: 0.85; }
+  .carddot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0; margin-right: 4px; vertical-align: middle; opacity: 0.85; }
   #fab { position: fixed; right: 20px; bottom: 24px; width: 58px; height: 58px; border-radius: 50%; border: none; background: linear-gradient(135deg, #ffb3c6, #ff8fab); color: #fff; font-size: 30px; line-height: 1; box-shadow: 0 4px 14px rgba(255,143,171,.5); cursor: pointer; z-index: 20; }
   .overlay { position: fixed; inset: 0; background: rgba(80,60,60,.35); display: none; z-index: 30; }
   .overlay.show { display: block; }
@@ -415,8 +415,7 @@
     var memo = it.memo ? '<div class="meta">' + esc(it.memo) + '</div>' : '';
     return '<div class="item" style="cursor:pointer" onclick="openEdit(\'' + jstr(it.id) + '\')">'
       + '<div class="info"><div class="shop">' + (em ? em + ' ' : '') + esc(it.shop) + '</div>' + memo + '</div>'
-      + cardDot(it.pay)
-      + '<div class="amt">' + yen(it.amount) + '</div>'
+      + '<div class="amt">' + cardDot(it.pay) + yen(it.amount) + '</div>'
       + '<span class="editcue">✏️</span>'
       + '<button class="del" onclick="event.stopPropagation();del(\'' + it.id + '\')">✕</button></div>';
   }
@@ -543,8 +542,7 @@
     var memo = it.memo ? '<div class="meta">' + esc(it.memo) + '</div>' : '';
     return '<div class="item" style="cursor:pointer" onclick="openEdit(\'' + jstr(it.id) + '\')">'
       + '<div class="info"><div class="shop">' + esc(it.shop) + '</div>' + memo + '</div>'
-      + cardDot(it.pay)
-      + '<div class="amt">' + yen(it.amount) + '</div>'
+      + '<div class="amt">' + cardDot(it.pay) + yen(it.amount) + '</div>'
       + '<span class="editcue">✏️</span></div>';
   }
   function openEdit(id) {
