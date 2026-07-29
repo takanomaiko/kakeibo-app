@@ -213,6 +213,24 @@
   .swatch { width: 30px; height: 30px; border-radius: 50%; cursor: pointer; border: 3px solid transparent; }
   .swatch.sel { border-color: #fff; box-shadow: 0 0 0 2px var(--accent); }
 
+  /* 年間まとめ画面（敵１〜敵４を横断して見るので、専用の色にしています） */
+  #year {
+    --bg: #fffbf5; --g1: #ffd9a0; --g2: #f5b866;
+    --gShadow35: rgba(245,184,102,.35); --gShadow50: rgba(245,184,102,.5);
+    --track: #f4eee3; --tint: #fffaf0; --tintFg: #b8873a; --accent: #c2a678;
+    --muted: #a0998c; --muted2: #b8b1a5; --ink: #4a463f;
+    --cardShadow10: rgba(180,165,140,.12); --cardShadow08: rgba(180,165,140,.10);
+    --line: #f0e8d9; --inputBg: #fffdfa; --inputBg2: #fffcf8;
+    --faint: #e0dbd2; --chev: #d9cebc; --rowLine: #f6f1e9;
+    position: fixed; inset: 0; z-index: 41; display: none; flex-direction: column;
+    background: var(--bg); color: var(--ink);
+  }
+  #year.show { display: flex; }
+  #year .dHead .ynav { margin-left: auto; display: flex; gap: 8px; flex-shrink: 0; }
+  .plus { color: #4caf8e; } .minus { color: #e05d5d; }
+  .sumrow { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; font-size: 13px; color: var(--muted); }
+  .sumrow b { font-size: 15px; color: var(--ink); }
+
   /* ログイン画面 */
   #login { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; padding: 24px; background: linear-gradient(160deg, #ffe3ea, #fff7f5); z-index: 50; }
   .logincard { background: #fff; border-radius: 24px; padding: 30px 24px; width: 100%; max-width: 360px; box-shadow: 0 8px 24px rgba(255,143,171,.25); }
@@ -247,6 +265,22 @@
     <div><div class="dTtl" id="dTtl"></div><div class="dSub" id="dSub"></div></div>
   </div>
   <div class="dBody" id="dBody"></div>
+</div>
+
+<!-- 年間まとめ画面（収入と支出をあわせて見る） -->
+<div id="year">
+  <div class="dHead">
+    <button onclick="closeYear()">✕</button>
+    <div><div class="dTtl" id="yTtl"></div><div class="dSub">収入と支出のまとめ</div></div>
+    <div class="ynav">
+      <button onclick="moveYear(-1)">◀</button>
+      <button onclick="moveYear(1)">▶</button>
+    </div>
+  </div>
+  <div class="dBody" id="yBody"></div>
+  <!-- 収入の入力シート（この中に置くと、まとめ画面と同じ色になります） -->
+  <div id="incOverlay" class="overlay" onclick="closeIncome()"></div>
+  <div id="incSheet" class="sheet"></div>
 </div>
 
 <!-- ログイン画面 -->
@@ -349,10 +383,10 @@
      view: 'month'＝1ヶ月ずつ見るタブ／'year'＝1年ずつ見るタブ
      ============================================================ */
   var KINDS = [
-    { key: 'fixed',        label: '敵１固定費',         view: 'month', defs: DEFAULT_FIXED },
-    { key: 'variable',     label: '敵２変動費',         view: 'month', defs: DEFAULT_CATEGORIES },
-    { key: 'fixed_yearly', label: '敵３不定期の固定費',  view: 'year',  defs: DEFAULT_FIXED_YEARLY },
-    { key: 'var_yearly',   label: '敵４不定期の変動費',  view: 'year',  defs: DEFAULT_VAR_YEARLY }
+    { key: 'fixed',        label: '敵１固定費',         view: 'month', defs: DEFAULT_FIXED,        color: '#8fc3ff' },
+    { key: 'variable',     label: '敵２変動費',         view: 'month', defs: DEFAULT_CATEGORIES,   color: '#ff8fab' },
+    { key: 'fixed_yearly', label: '敵３不定期の固定費',  view: 'year',  defs: DEFAULT_FIXED_YEARLY, color: '#7fd3b2' },
+    { key: 'var_yearly',   label: '敵４不定期の変動費',  view: 'year',  defs: DEFAULT_VAR_YEARLY,   color: '#b79bff' }
   ];
   function kindDef(k) {
     for (var i = 0; i < KINDS.length; i++) if (KINDS[i].key === k) return KINDS[i];
@@ -971,6 +1005,7 @@
     });
     h += '</div><div class="settotal" id="setTotal"></div>';
     h += '<button class="primaryBtn" id="setSaveBtn" onclick="saveSettings()">保存する</button>';
+    h += '<button class="linkBtn" onclick="openYear()">📊 年間まとめ（収入と支出）</button>';
     h += '<button class="linkBtn" onclick="openCatManager()">🏷 費目を編集（追加・名前・色）</button>';
     h += '<button class="linkBtn" onclick="openImport()">📥 データをまとめて取り込み</button>';
     h += '<button class="linkBtn" onclick="doLogout()">ログアウト</button>';
@@ -1180,6 +1215,180 @@
     closeImport();
     alert(parsed.rows.length + '件を取り込みました🌸');
     await refresh();
+  }
+
+  /* ============================================================
+     ---- 年間まとめ（収入と支出をあわせて見る画面）----
+     収入は entries に kind='income' で入れています。
+     敵１〜敵４のタブは kind でふるい分けているので、収入がタブに出ることはありません。
+     ============================================================ */
+  var yearY = null;      // まとめ画面で見ている年
+  var incEditId = null;  // 収入シートで編集中の記録（新規追加のときは null）
+
+  function todayStr() {
+    var t = new Date();
+    return t.getFullYear() + '-' + ('0' + (t.getMonth() + 1)).slice(-2) + '-' + ('0' + t.getDate()).slice(-2);
+  }
+  function openYear() {
+    closeSettings();
+    yearY = y;
+    renderYear();
+    document.getElementById('year').classList.add('show');
+    document.getElementById('yBody').scrollTop = 0;
+  }
+  function closeYear() { document.getElementById('year').classList.remove('show'); }
+  function moveYear(d) { yearY += d; renderYear(); }
+  function yearOpen() { return document.getElementById('year').classList.contains('show'); }
+
+  function renderYear() {
+    var ys = String(yearY);
+    var totalIn = 0, totalOut = 0, byKind = {}, incomes = [];
+    var monthly = [];
+    for (var i = 0; i < 12; i++) monthly.push({ inc: 0, exp: 0 });
+
+    state.entries.forEach(function (e) {
+      if (String(e.date).slice(0, 4) !== ys) return;
+      var m = Number(String(e.date).slice(5, 7)) - 1;
+      var a = Number(e.amount);
+      if (kindOf(e) === 'income') {
+        totalIn += a; incomes.push(e);
+        if (m >= 0 && m < 12) monthly[m].inc += a;
+      } else {
+        totalOut += a;
+        byKind[kindOf(e)] = (byKind[kindOf(e)] || 0) + a;
+        if (m >= 0 && m < 12) monthly[m].exp += a;
+      }
+    });
+    var bal = totalIn - totalOut;
+
+    document.getElementById('yTtl').textContent = ys + '年';
+
+    var h = '<div class="card"><div class="label">' + ys + '年の収支</div>';
+    h += '<div class="big ' + (bal >= 0 ? 'plus' : 'minus') + '">'
+      + (bal < 0 ? '−' + yen(-bal) : '＋' + yen(bal)) + '</div>';
+    h += '<div class="sumrow"><span>💰 収入</span><b>' + yen(totalIn) + '</b></div>';
+    h += '<div class="sumrow"><span>🛒 支出</span><b>' + yen(totalOut) + '</b></div>';
+    if (totalIn > 0) {
+      var rate = Math.round((bal / totalIn) * 100);
+      h += '<div class="perday">' + (bal >= 0
+        ? '🌷 収入の ' + rate + '% を残せています'
+        : '😢 収入より ' + yen(-bal) + ' 多く使っています') + '</div>';
+    }
+    h += '</div>';
+
+    // 支出の内訳（敵１〜敵４）
+    h += '<div class="card"><h2>支出の内訳</h2>';
+    KINDS.forEach(function (k) {
+      var v = byKind[k.key] || 0;
+      var r = totalOut > 0 ? v / totalOut : 0;
+      h += '<div class="cat" style="cursor:default">'
+        + '<div class="name">' + k.label + '</div>'
+        + '<div class="cbar"><div style="width:' + (r * 100).toFixed(1) + '%;background:' + k.color + '"></div></div>'
+        + '<div class="num">' + yen(v) + '</div></div>';
+    });
+    h += '</div>';
+
+    // 月ごとの収支
+    h += '<div class="card"><h2>月ごとの収支</h2>' + balanceChartSvg(monthly) + '</div>';
+
+    // 収入の明細
+    h += '<h2 style="margin-left:6px">収入の明細（' + incomes.length + '件）</h2>';
+    if (!incomes.length) {
+      h += '<div class="dEmpty">まだ収入が入っていません。下のボタンから追加してね</div>';
+    } else {
+      incomes.sort(function (a, b) { return a.date < b.date ? 1 : -1; });
+      var lastM = '';
+      incomes.forEach(function (it) {
+        var mk = String(it.date).slice(0, 7);
+        if (mk !== lastM) { lastM = mk; h += '<div class="day">' + Number(mk.slice(5, 7)) + '月</div>'; }
+        var memo = it.memo ? '<div class="meta">' + esc(it.memo) + '</div>' : '';
+        h += '<div class="item" style="cursor:pointer" onclick="openIncome(\'' + jstr(it.id) + '\')">'
+          + '<div class="info"><div class="shop">' + esc(it.shop) + '</div>' + memo + '</div>'
+          + '<div class="amt plus">＋' + yen(it.amount) + '</div>'
+          + '<span class="editcue">✏️</span></div>';
+      });
+    }
+    h += '<button class="primaryBtn" style="margin-top:14px" onclick="openIncome(null)">💰 収入を追加</button>';
+    h += '<div style="height:24px"></div>';
+
+    document.getElementById('yBody').innerHTML = h;
+  }
+
+  // 月ごとの収支グラフ（真ん中の線より上＝黒字、下＝赤字）
+  function balanceChartSvg(monthly) {
+    var vals = monthly.map(function (m) { return m.inc - m.exp; });
+    var maxV = Math.max.apply(null, vals.map(Math.abs).concat([1]));
+    var W = 340, H = 170, padX = 6, padT = 8, padB = 20;
+    var plotH = H - padT - padB, mid = padT + plotH / 2, half = plotH / 2;
+    var slot = (W - padX * 2) / 12, bw = slot * 0.55;
+    var s = '<svg class="chartSvg" viewBox="0 0 ' + W + ' ' + H + '">';
+    s += '<line x1="' + padX + '" y1="' + mid + '" x2="' + (W - padX) + '" y2="' + mid + '" style="stroke:var(--line)" stroke-width="1"/>';
+    vals.forEach(function (v, i) {
+      var hh = Math.abs(v) / maxV * half;
+      var x = padX + slot * i + (slot - bw) / 2;
+      var yb = v >= 0 ? mid - hh : mid;
+      if (v !== 0) {
+        s += '<rect x="' + x.toFixed(1) + '" y="' + yb.toFixed(1) + '" width="' + bw.toFixed(1)
+          + '" height="' + hh.toFixed(1) + '" rx="2" fill="' + (v >= 0 ? '#7fc8a9' : '#ef8080') + '"/>';
+      }
+      s += '<text x="' + (x + bw / 2).toFixed(1) + '" y="' + (H - 6) + '" text-anchor="middle" font-size="9" style="fill:var(--muted2)">' + (i + 1) + '</text>';
+    });
+    return s + '</svg>';
+  }
+
+  /* ---- 収入の入力シート ---- */
+  function openIncome(id) {
+    incEditId = id || null;
+    var it = incEditId ? state.entries.filter(function (e) { return e.id === incEditId; })[0] : null;
+    var d = it ? String(it.date).slice(0, 10)
+      : (String(yearY) === String(new Date().getFullYear()) ? todayStr() : yearY + '-01-01');
+    var h = '<h3>' + (it ? '✏️ 収入を編集' : '💰 収入を追加') + '</h3>'
+      + '<div class="row2">'
+      + '<div class="field"><label>金額（円）</label><input type="number" id="i_amount" inputmode="numeric" value="' + (it ? esc(it.amount) : '') + '" placeholder="250000"></div>'
+      + '<div class="field"><label>日付</label><input type="date" id="i_date" value="' + esc(d) + '"></div>'
+      + '</div>'
+      + '<div class="field"><label>内容</label><input type="text" id="i_shop" value="' + (it ? esc(it.shop) : '') + '" placeholder="給料 / 賞与 / 児童手当 など"></div>'
+      + '<div class="field"><label>メモ（任意）</label><input type="text" id="i_memo" value="' + (it ? esc(it.memo || '') : '') + '"></div>'
+      + '<button class="primaryBtn" id="incSaveBtn" onclick="saveIncome()">保存する</button>';
+    if (it) h += '<button class="linkBtn" onclick="delIncome()">✕ この収入を削除</button>';
+    document.getElementById('incSheet').innerHTML = h;
+    document.getElementById('incOverlay').className = 'overlay show';
+    document.getElementById('incSheet').style.display = 'block';
+  }
+  function closeIncome() {
+    document.getElementById('incOverlay').className = 'overlay';
+    document.getElementById('incSheet').style.display = 'none';
+  }
+  async function saveIncome() {
+    var amount = Number(document.getElementById('i_amount').value);
+    if (!(amount > 0)) { alert('金額を入れてください'); return; }
+    var btn = document.getElementById('incSaveBtn');
+    btn.disabled = true; btn.textContent = '保存中…';
+    var row = {
+      date: document.getElementById('i_date').value,
+      amount: Math.round(amount),
+      shop: document.getElementById('i_shop').value || '収入',
+      memo: document.getElementById('i_memo').value || '',
+      category: '収入',
+      pay: '',
+      kind: 'income'
+    };
+    var res = incEditId
+      ? await sb.from('entries').update(row).eq('id', incEditId)
+      : await sb.from('entries').insert(Object.assign({ user_id: state.uid }, row));
+    btn.disabled = false; btn.textContent = '保存する';
+    if (res.error) { alert('保存に失敗：' + res.error.message); return; }
+    closeIncome();
+    await refresh();
+    if (yearOpen()) renderYear();
+  }
+  async function delIncome() {
+    if (!confirm('この収入を削除しますか？')) return;
+    var res = await sb.from('entries').update({ deleted: true }).eq('id', incEditId);
+    if (res.error) { alert('削除に失敗：' + res.error.message); return; }
+    closeIncome();
+    await refresh();
+    if (yearOpen()) renderYear();
   }
 
   /* ---- ログイン関係 ---- */
