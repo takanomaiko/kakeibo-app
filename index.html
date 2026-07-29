@@ -1486,7 +1486,7 @@
     var btn = document.getElementById('mailBtn');
     mailBusy = true;
     btn.className = 'spinning';
-    toast('📬 メールを確認しています…', 30000);
+    toast('更新中', 30000);
     try {
       // ログイン証明（アクセストークン）を本文に入れて送る。URLには入れない
       var s = await sb.auth.getSession();
