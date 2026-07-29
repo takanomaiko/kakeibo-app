@@ -56,6 +56,56 @@
     --chev: #bccbd9;
     --rowLine: #e9eef6;
   }
+  /* 敵３不定期の固定費 → みどり */
+  body.kind-fixed_yearly {
+    --bg: #f5fdf9;
+    --g1: #a8e6cf;
+    --g2: #7fd3b2;
+    --gShadow35: rgba(127,211,178,.35);
+    --gShadow50: rgba(127,211,178,.5);
+    --tabBg: #e8f7f0;
+    --tabFg: #8fb8a8;
+    --track: #e3f4ee;
+    --tint: #eefaf5;
+    --tintFg: #3f9e7c;
+    --accent: #7ab8a0;
+    --muted: #8ca099;
+    --muted2: #a5b8b1;
+    --ink: #3f4a46;
+    --cardShadow10: rgba(140,180,165,.12);
+    --cardShadow08: rgba(140,180,165,.10);
+    --line: #d9f0e8;
+    --inputBg: #fafffd;
+    --inputBg2: #f8fffc;
+    --faint: #d2e0db;
+    --chev: #bcd9ce;
+    --rowLine: #e9f6f1;
+  }
+  /* 敵４不定期の変動費 → むらさき */
+  body.kind-var_yearly {
+    --bg: #faf7ff;
+    --g1: #d5c2ff;
+    --g2: #b79bff;
+    --gShadow35: rgba(183,155,255,.35);
+    --gShadow50: rgba(183,155,255,.5);
+    --tabBg: #f0eafd;
+    --tabFg: #ab9ac9;
+    --track: #ece3f4;
+    --tint: #f5f0ff;
+    --tintFg: #8a63c9;
+    --accent: #a08ac9;
+    --muted: #978ca0;
+    --muted2: #afa5b8;
+    --ink: #453f4a;
+    --cardShadow10: rgba(161,140,180,.12);
+    --cardShadow08: rgba(161,140,180,.10);
+    --line: #e5d9f0;
+    --inputBg: #fdfaff;
+    --inputBg2: #fcf8ff;
+    --faint: #d9d2e0;
+    --chev: #cbbcd9;
+    --rowLine: #f0e9f6;
+  }
   /* 色が切り替わるときにふわっと変える */
   body, header, #tabs, .tab, #detail, .dHead, .card, .item { transition: background-color .25s, color .25s; }
 
@@ -66,8 +116,9 @@
   header button { background: rgba(255,255,255,.25); border: none; color: #fff; width: 34px; height: 34px; border-radius: 50%; font-size: 14px; cursor: pointer; }
   #gear { position: absolute; right: 14px; top: 50%; transform: translateY(-50%); font-size: 16px; }
   /* タブ（敵１固定費／敵２変動費） */
-  #tabs { position: sticky; top: 62px; z-index: 9; display: flex; gap: 8px; max-width: 560px; margin: 0 auto; padding: 10px 14px 4px; background: var(--bg); }
-  .tab { flex: 1; border: none; border-radius: 999px; padding: 9px 8px; font-size: 13px; font-weight: 700; font-family: inherit; cursor: pointer; background: var(--tabBg); color: var(--tabFg); transition: background .2s, color .2s; }
+  /* 4つのタブは2つずつ2段に並べる（名前が長いので） */
+  #tabs { position: sticky; top: 62px; z-index: 9; display: flex; flex-wrap: wrap; gap: 6px; max-width: 560px; margin: 0 auto; padding: 10px 14px 4px; background: var(--bg); }
+  .tab { flex: 1 1 calc(50% - 6px); min-width: 0; border: none; border-radius: 999px; padding: 9px 6px; font-size: 12.5px; font-weight: 700; font-family: inherit; cursor: pointer; background: var(--tabBg); color: var(--tabFg); transition: background .2s, color .2s; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .tab.on { background: linear-gradient(135deg, var(--g1), var(--g2)); color: #fff; box-shadow: 0 2px 7px var(--gShadow35); }
   main { max-width: 560px; margin: 0 auto; padding: 14px; }
   .card { background: #fff; border-radius: 20px; padding: 16px 18px; margin-bottom: 14px; box-shadow: 0 3px 10px var(--cardShadow10); }
@@ -180,6 +231,8 @@
 <nav id="tabs">
   <button class="tab" data-kind="fixed" onclick="switchKind('fixed')">敵１固定費</button>
   <button class="tab on" data-kind="variable" onclick="switchKind('variable')">敵２変動費</button>
+  <button class="tab" data-kind="fixed_yearly" onclick="switchKind('fixed_yearly')">敵３不定期の固定費</button>
+  <button class="tab" data-kind="var_yearly" onclick="switchKind('var_yearly')">敵４不定期の変動費</button>
 </nav>
 <main id="app"></main>
 <button id="fab" onclick="openSheet()">＋</button>
@@ -270,21 +323,65 @@
     { name: 'N中',     emoji: '🎓', budget: 0, color: '#8fd3c8' },
     { name: '塾',      emoji: '✏️', budget: 0, color: '#f5a3c7' }
   ];
+  // 敵３不定期の固定費タブの初期費目（1年に1回くらいの決まった出費）
+  var DEFAULT_FIXED_YEARLY = [
+    { name: '火災保険',   emoji: '🔥', budget: 0, color: '#f7a072' },
+    { name: '固定資産税', emoji: '🏠', budget: 0, color: '#ffc4a3' },
+    { name: '自動車税',   emoji: '🚙', budget: 0, color: '#8fd3c8' },
+    { name: '車検',      emoji: '🚗', budget: 0, color: '#a3c9ff' },
+    { name: '年会費',     emoji: '💳', budget: 0, color: '#c3a6ff' }
+  ];
+  // 敵４不定期の変動費タブの初期費目（いつ・いくらか読めない大きめの出費）
+  var DEFAULT_VAR_YEARLY = [
+    { name: '家具・家電', emoji: '🛋️', budget: 0, color: '#c9b6a0' },
+    { name: '旅行',      emoji: '✈️', budget: 0, color: '#9ad0e0' },
+    { name: '冠婚葬祭',   emoji: '💐', budget: 0, color: '#f5a3c7' },
+    { name: '家のメンテ', emoji: '🔧', budget: 0, color: '#b0c0a0' },
+    { name: 'プレゼント', emoji: '🎁', budget: 0, color: '#e0b0d0' }
+  ];
   /* ▲▲▲ 設定はここまで ▲▲▲ */
+
+  /* ============================================================
+     ▼▼▼ 4つのタブの定義 ▼▼▼
+     view: 'month'＝1ヶ月ずつ見るタブ／'year'＝1年ずつ見るタブ
+     ============================================================ */
+  var KINDS = [
+    { key: 'fixed',        label: '敵１固定費',         view: 'month', defs: DEFAULT_FIXED },
+    { key: 'variable',     label: '敵２変動費',         view: 'month', defs: DEFAULT_CATEGORIES },
+    { key: 'fixed_yearly', label: '敵３不定期の固定費',  view: 'year',  defs: DEFAULT_FIXED_YEARLY },
+    { key: 'var_yearly',   label: '敵４不定期の変動費',  view: 'year',  defs: DEFAULT_VAR_YEARLY }
+  ];
+  function kindDef(k) {
+    for (var i = 0; i < KINDS.length; i++) if (KINDS[i].key === k) return KINDS[i];
+    return KINDS[1];  // 見つからないときは敵２変動費あつかい
+  }
+  function kindLabel(k) { return kindDef(k).label; }
+  // いま見ているタブが「年で見るタブ」（敵３・敵４）かどうか
+  function isYearView() { return kindDef(kind).view === 'year'; }
+
   // 実際に使う費目リスト。Supabaseの categories テーブルがあればそれで上書きされる
   function cloneDefaults(kindName) {
-    var src = (kindName === 'fixed') ? DEFAULT_FIXED : DEFAULT_CATEGORIES;
+    var src = kindDef(kindName).defs;
     return src.map(function (c, i) {
       return { name: c.name, emoji: c.emoji, color: c.color, budget: c.budget, sort: i, kind: kindName || 'variable' };
     });
   }
+  function allDefaults() {
+    var arr = [];
+    KINDS.forEach(function (k) {
+      cloneDefaults(k.key).forEach(function (c) { c.sort = arr.length; arr.push(c); });
+    });
+    return arr;
+  }
   // ALL_CATEGORIES＝全タブぶん／CATEGORIES＝いま見ているタブのぶん
-  var ALL_CATEGORIES = cloneDefaults('variable').concat(cloneDefaults('fixed'));
+  var ALL_CATEGORIES = allDefaults();
   var CATEGORIES = [];
   function applyKind() {
     CATEGORIES = ALL_CATEGORIES.filter(function (c) { return (c.kind || 'variable') === kind; });
-    // 敵１固定費タブのときは画面全体を青いテーマにする（変動費はピンク）
-    document.body.classList.toggle('kind-fixed', kind === 'fixed');
+    // タブごとに画面全体の色を変える（変動費=ピンク／固定費=青／敵３=みどり／敵４=むらさき）
+    KINDS.forEach(function (k) {
+      document.body.classList.toggle('kind-' + k.key, kind === k.key);
+    });
   }
   // 色えらびのパレット（かわいいパステル系）
   var PALETTE = ['#ff8fab', '#ffc4a3', '#ffd670', '#c3a6ff', '#8fd3c8', '#f5a3c7', '#a3c9ff', '#b5e0a0', '#ff6b6b', '#f7a072', '#9ad0e0', '#e0b0d0', '#b0c0a0', '#c9b6a0'];
@@ -320,6 +417,14 @@
   var state = { uid: null, entries: [], budgets: {}, mbudgets: {} };
 
   function ymStr() { return y + '-' + ('0' + (mo + 1)).slice(-2); }
+  /* 「いま見ている期間」まわり。月タブは1ヶ月ぶん、年タブは1年ぶんを見る。
+     予算は年タブでも monthly_budgets に「その年の1月」として保存する。
+     こうすると「設定した年から先に反映」が月タブとまったく同じしくみで動く。 */
+  function periodKey() { return isYearView() ? (y + '-01') : ymStr(); }
+  function periodPrefix() { return isYearView() ? String(y) : ymStr(); }   // 明細をふるい分ける文字列
+  function inPeriod(e) { return String(e.date).slice(0, periodPrefix().length) === periodPrefix(); }
+  function periodTitle() { return isYearView() ? (y + '年') : (y + '年' + (mo + 1) + '月'); }
+  function periodWord() { return isYearView() ? '今年' : '今月'; }
   function yen(n) { return '¥' + Number(n).toLocaleString(); }
   function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
   function jstr(s) { return String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'"); }
@@ -338,7 +443,7 @@
   }
   function label(name) { var e = emojiFor(name); return (e ? e + ' ' : '') + name; }
   function budgetFor(name, ym) {
-    ym = ym || ymStr();
+    ym = ym || periodKey();
     // 月ごとの設定があれば「その月以前で一番新しい設定」を使う（＝設定した月から先に反映）
     var arr = state.mbudgets && state.mbudgets[name];
     if (arr && arr.length) {
@@ -384,17 +489,21 @@
         ALL_CATEGORIES = rows.map(function (r) {
           return { name: r.name, emoji: r.emoji || '', color: r.color || '#ff8fab', budget: Number(r.budget) || 0, sort: r.sort || 0, kind: r.kind || 'variable' };
         });
-        // 固定費の費目がまだ1つも無ければ、初期の6つを入れておく
-        if (!ALL_CATEGORIES.some(function (c) { return c.kind === 'fixed'; })) {
-          var seed = cloneDefaults('fixed');
+        // まだ費目が1つも無いタブがあれば、そのタブの初期費目を入れておく
+        // （敵３・敵４を後から足したときも、次に開いたときに自動でそろう）
+        for (var ki = 0; ki < KINDS.length; ki++) {
+          var kk = KINDS[ki].key;
+          if (ALL_CATEGORIES.some(function (c) { return c.kind === kk; })) continue;
+          var maxS = ALL_CATEGORIES.reduce(function (m, c) { return Math.max(m, c.sort || 0); }, 0);
+          var seed = cloneDefaults(kk).map(function (c, i) { c.sort = maxS + 1 + i; return c; });
           var ins = await sb.from('categories').insert(seed.map(function (c) {
-            return { user_id: state.uid, name: c.name, emoji: c.emoji, color: c.color, budget: c.budget, sort: c.sort, kind: 'fixed' };
+            return { user_id: state.uid, name: c.name, emoji: c.emoji, color: c.color, budget: c.budget, sort: c.sort, kind: kk };
           }));
           if (!ins.error) ALL_CATEGORIES = ALL_CATEGORIES.concat(seed);
         }
       } else {
-        // テーブルはあるが空 → デフォルト費目（変動費＋固定費）を一度だけ登録する
-        ALL_CATEGORIES = cloneDefaults('variable').concat(cloneDefaults('fixed'));
+        // テーブルはあるが空 → 4タブぶんのデフォルト費目を一度だけ登録する
+        ALL_CATEGORIES = allDefaults();
         try {
           await sb.from('categories').insert(ALL_CATEGORIES.map(function (c) {
             return { user_id: state.uid, name: c.name, emoji: c.emoji, color: c.color, budget: c.budget, sort: c.sort, kind: c.kind };
@@ -402,7 +511,7 @@
         } catch (e) { /* 失敗してもデフォルトのまま動く */ }
       }
     } else {
-      ALL_CATEGORIES = cloneDefaults('variable').concat(cloneDefaults('fixed'));
+      ALL_CATEGORIES = allDefaults();
     }
     applyKind();
   }
@@ -413,9 +522,10 @@
   }
 
   /* ---- その月の集計データを組み立てる（手元の state から）---- */
-  function buildData(ym) {
+  function buildData() {
+    var ym = periodKey();
     var items = state.entries.filter(function (e) {
-      return String(e.date).slice(0, 7) === ym && kindOf(e) === kind;
+      return inPeriod(e) && kindOf(e) === kind;
     });
     items.sort(function (a, b) {
       if (a.date !== b.date) return a.date < b.date ? 1 : -1;
@@ -441,10 +551,15 @@
     };
   }
 
+  // ◀▶ ボタン。月タブなら1ヶ月ずつ、年タブ（敵３・敵４）なら1年ずつ動かす
   function moveMonth(d) {
-    mo += d;
-    if (mo < 0) { mo = 11; y--; }
-    if (mo > 11) { mo = 0; y++; }
+    if (isYearView()) {
+      y += d;
+    } else {
+      mo += d;
+      if (mo < 0) { mo = 11; y--; }
+      if (mo > 11) { mo = 0; y++; }
+    }
     load();
   }
 
@@ -460,9 +575,9 @@
   }
 
   function load() {
-    document.getElementById('ymLabel').textContent = y + '年' + (mo + 1) + '月';
     applyKind();
-    render(buildData(ymStr()));
+    document.getElementById('ymLabel').textContent = periodTitle();
+    render(buildData());
   }
 
   function render(d) {
@@ -471,13 +586,19 @@
     var ratio = d.totalBudget > 0 ? d.totalSpent / d.totalBudget : 0;
     var mood = ratio >= 1 ? 'over' : ratio >= 0.8 ? 'warn' : 'ok';
 
-    var html = '<div class="card"><div class="label">今月あと使えるお金</div>';
+    var html = '<div class="card"><div class="label">' + periodWord() + 'あと使えるお金</div>';
     html += '<div class="big ' + mood + '">' + (remain < 0 ? '−' + yen(-remain) : yen(remain)) + '</div>';
     html += '<div class="bar ' + mood + '"><div style="width:' + Math.min(ratio * 100, 100) + '%"></div></div>';
     html += '<div class="sub"><span>使った額 ' + yen(d.totalSpent) + '</span><span>予算 ' + yen(d.totalBudget) + '</span></div>';
 
     var today = new Date();
-    if (today.getFullYear() === y && today.getMonth() === mo && remain > 0) {
+    if (isYearView()) {
+      // 年で見るタブは「1ヶ月あたりいくらまで」を出す
+      if (today.getFullYear() === y && remain > 0) {
+        var monthsLeft = 12 - today.getMonth();
+        html += '<div class="perday">🌷 あと' + monthsLeft + 'ヶ月、1ヶ月 ' + yen(Math.floor(remain / monthsLeft)) + ' まで使えます</div>';
+      }
+    } else if (today.getFullYear() === y && today.getMonth() === mo && remain > 0) {
       var daysLeft = new Date(y, mo + 1, 0).getDate() - today.getDate() + 1;
       html += '<div class="perday">🌷 あと' + daysLeft + '日、1日 ' + yen(Math.floor(remain / daysLeft)) + ' まで使えます</div>';
     }
@@ -503,11 +624,18 @@
 
     html += '<h2 style="margin-left:6px">明細（' + d.items.length + '件）</h2>';
     if (!d.items.length) html += '<div class="empty">まだ記録がありません。右下の＋から追加してね</div>';
-    var lastDay = '';
+    // 月タブは「日づけ」ごと、年タブ（敵３・敵４）は「月」ごとにまとめて表示する
+    var groupOf = function (it) { return isYearView() ? String(it.date).slice(0, 7) : it.date; };
+    var groupSum = {};
+    d.items.forEach(function (it) { groupSum[groupOf(it)] = (groupSum[groupOf(it)] || 0) + Number(it.amount); });
+    var lastG = '';
     d.items.forEach(function (it) {
-      if (it.date !== lastDay) {
-        lastDay = it.date;
-        html += '<div class="day">' + dayLabel(it.date) + '</div>';
+      var g = groupOf(it);
+      if (g !== lastG) {
+        lastG = g;
+        html += '<div class="day">' + (isYearView()
+          ? Number(g.slice(5, 7)) + '月（' + yen(groupSum[g]) + '）'
+          : dayLabel(it.date)) + '</div>';
       }
       html += itemHtml(it);
     });
@@ -558,31 +686,38 @@
       + '<text class="donutCenter" x="65" y="76" text-anchor="middle" font-size="15">' + yen(d.totalSpent) + '</text>'
       + '</svg>';
 
-    return '<div class="card"><h2>今月の内訳</h2><div class="donutWrap">'
+    return '<div class="card"><h2>' + periodWord() + 'の内訳</h2><div class="donutWrap">'
       + svg + '<div class="legend">' + legend + '</div></div></div>';
   }
 
   /* ---- カテゴリ詳細画面（月推移グラフ＋明細）---- */
   var detailCat = null;
-  function monthsBack(n) {
+  // グラフに出す直近n期間。月タブなら直近nヶ月、年タブ（敵３・敵４）なら直近n年
+  function periodsBack(n) {
     var arr = [];
     for (var i = n - 1; i >= 0; i--) {
-      var mm = mo - i, yy = y;
-      while (mm < 0) { mm += 12; yy--; }
-      arr.push({ mo: mm, ym: yy + '-' + ('0' + (mm + 1)).slice(-2), label: (mm + 1) + '月' });
+      if (isYearView()) {
+        var yy2 = y - i;
+        arr.push({ key: String(yy2), label: yy2 + '年' });
+      } else {
+        var mm = mo - i, yy = y;
+        while (mm < 0) { mm += 12; yy--; }
+        arr.push({ key: yy + '-' + ('0' + (mm + 1)).slice(-2), label: (mm + 1) + '月' });
+      }
     }
     return arr;
   }
-  function catSpentInYm(cat, ym) {
+  // その費目を、指定した期間（'2026-07' や '2026'）でいくら使ったか
+  function catSpentIn(cat, prefix) {
     var s = 0;
     state.entries.forEach(function (e) {
-      if (e.category === cat && String(e.date).slice(0, 7) === ym && kindOf(e) === kind) s += Number(e.amount);
+      if (e.category === cat && String(e.date).slice(0, prefix.length) === prefix && kindOf(e) === kind) s += Number(e.amount);
     });
     return s;
   }
   function barChartSvg(cat) {
-    var months = monthsBack(6);
-    var vals = months.map(function (m) { return catSpentInYm(cat, m.ym); });
+    var months = periodsBack(6);
+    var vals = months.map(function (m) { return catSpentIn(cat, m.key); });
     var maxV = Math.max.apply(null, vals.concat([1]));
     var col = colorFor(cat);
     var W = 340, H = 190, padT = 24, padB = 24, padX = 6;
@@ -594,7 +729,7 @@
       var h = maxV > 0 ? (vals[i] / maxV) * plotH : 0;
       var x = padX + slot * i + (slot - bw) / 2;
       var yb = padT + (plotH - h);
-      var cur = (m.ym === ymStr());
+      var cur = (m.key === periodPrefix());
       s += '<rect x="' + x.toFixed(1) + '" y="' + yb.toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + h.toFixed(1)
         + '" rx="4" fill="' + col + '" opacity="' + (cur ? 1 : 0.5) + '"/>';
       if (vals[i] > 0) s += '<text x="' + (x + bw / 2).toFixed(1) + '" y="' + (yb - 5).toFixed(1) + '" text-anchor="middle" font-size="10" style="fill:var(--muted)">' + Number(vals[i]).toLocaleString() + '</text>';
@@ -605,15 +740,14 @@
   }
   function openCatDetail(cat) {
     detailCat = cat;
-    var curYm = ymStr();
-    var total = catSpentInYm(cat, curYm);
+    var total = catSpentIn(cat, periodPrefix());
     document.getElementById('dTtl').textContent = label(cat);
-    document.getElementById('dSub').textContent = (mo + 1) + '月　' + yen(total);
+    document.getElementById('dSub').textContent = (isYearView() ? y + '年' : (mo + 1) + '月') + '　' + yen(total);
 
     var html = '<div class="card">' + barChartSvg(cat) + '</div>';
 
     var items = state.entries.filter(function (e) {
-      return e.category === cat && String(e.date).slice(0, 7) === curYm && kindOf(e) === kind;
+      return e.category === cat && inPeriod(e) && kindOf(e) === kind;
     });
     items.sort(function (a, b) {
       if (a.date !== b.date) return a.date < b.date ? 1 : -1;
@@ -622,14 +756,18 @@
 
     html += '<h2 style="margin-left:6px">明細（' + items.length + '件）</h2>';
     if (!items.length) {
-      html += '<div class="dEmpty">この月の記録はありません</div>';
+      html += '<div class="dEmpty">この' + (isYearView() ? '年' : '月') + 'の記録はありません</div>';
     } else {
-      var lastDay = '', dayTotal = {};
-      items.forEach(function (it) { dayTotal[it.date] = (dayTotal[it.date] || 0) + Number(it.amount); });
+      // 月タブは日づけごと、年タブは月ごとに小計を出す
+      var gOf = function (it) { return isYearView() ? String(it.date).slice(0, 7) : it.date; };
+      var lastG = '', gTotal = {};
+      items.forEach(function (it) { gTotal[gOf(it)] = (gTotal[gOf(it)] || 0) + Number(it.amount); });
       items.forEach(function (it) {
-        if (it.date !== lastDay) {
-          lastDay = it.date;
-          html += '<div class="day">' + dayLabel(it.date) + '（' + yen(dayTotal[it.date]) + '）</div>';
+        var g = gOf(it);
+        if (g !== lastG) {
+          lastG = g;
+          html += '<div class="day">' + (isYearView() ? Number(g.slice(5, 7)) + '月' : dayLabel(it.date))
+            + '（' + yen(gTotal[g]) + '）</div>';
         }
         html += itemRowEditable(it);
       });
@@ -670,8 +808,8 @@
     if (!it) return;
     var itKind = kindOf(it);
     var catOpts = catOptionsFor(itKind, it.category);
-    var kindOpts = [['fixed', '敵１固定費'], ['variable', '敵２変動費']].map(function (p) {
-      return '<option value="' + p[0] + '"' + (p[0] === itKind ? ' selected' : '') + '>' + p[1] + '</option>';
+    var kindOpts = KINDS.map(function (p) {
+      return '<option value="' + p.key + '"' + (p.key === itKind ? ' selected' : '') + '>' + p.label + '</option>';
     }).join('');
     var pays = ['現金', 'カード', '電子マネー', 'その他'];
     if (pays.indexOf(it.pay) === -1) pays.unshift(it.pay);
@@ -770,7 +908,10 @@
   /* ---- 追加シート ---- */
   function openSheet() {
     var t = new Date();
-    document.getElementById('f_date').value = t.getFullYear() + '-' + ('0' + (t.getMonth() + 1)).slice(-2) + '-' + ('0' + t.getDate()).slice(-2);
+    var td = t.getFullYear() + '-' + ('0' + (t.getMonth() + 1)).slice(-2) + '-' + ('0' + t.getDate()).slice(-2);
+    // 今の月（年）を見ているなら今日。過去や先の月（年）を見ているならその1日を初期値にする
+    document.getElementById('f_date').value =
+      (td.slice(0, periodPrefix().length) === periodPrefix()) ? td : (isYearView() ? y + '-01-01' : ymStr() + '-01');
     document.getElementById('f_amount').value = '';
     document.getElementById('f_shop').value = '';
     document.getElementById('f_memo').value = '';
@@ -816,11 +957,12 @@
 
   /* ---- 予算の設定シート ---- */
   function openSettings() {
-    var h = '<h3>⚙️ 予算の設定（1ヶ月あたり）</h3>';
-    h += '<div class="setnote">📅 <b>' + y + '年' + (mo + 1) + '月から先</b>に反映されます（過去の月は変わりません）</div>';
+    var yv = isYearView();
+    var h = '<h3>⚙️ 予算の設定（1' + (yv ? '年' : 'ヶ月') + 'あたり）</h3>';
+    h += '<div class="setnote">📅 <b>' + periodTitle() + 'から先</b>に反映されます（過去の' + (yv ? '年' : '月') + 'は変わりません）</div>';
     h += '<div class="setlist">';
     CATEGORIES.forEach(function (c) {
-      var val = budgetFor(c.name, ymStr());
+      var val = budgetFor(c.name, periodKey());
       h += '<div class="setrow"><span class="setname">' + esc(label(c.name)) + '</span>'
         + '<input type="number" inputmode="numeric" data-cat="' + esc(c.name) + '" value="' + val + '"></div>';
     });
@@ -839,10 +981,11 @@
   function updateSetTotal() {
     var sum = 0;
     document.querySelectorAll('#setSheet input[data-cat]').forEach(function (inp) { sum += Number(inp.value) || 0; });
-    document.getElementById('setTotal').textContent = '合計予算：' + yen(sum) + ' / 月';
+    document.getElementById('setTotal').textContent = '合計予算：' + yen(sum) + (isYearView() ? ' / 年' : ' / 月');
   }
   async function saveSettings() {
-    var ym = ymStr();
+    // 年タブは「その年の1月」として保存する（＝設定した年から先に反映）
+    var ym = periodKey();
     var rows = [];
     document.querySelectorAll('#setSheet input[data-cat]').forEach(function (inp) {
       rows.push({ user_id: state.uid, category: inp.getAttribute('data-cat'), month: ym, amount: Number(inp.value) || 0 });
@@ -871,7 +1014,7 @@
   /* ---- 費目の管理（追加・名前・アイコン・色・削除）---- */
   function openCatManager() {
     closeSettings();
-    var h = '<h3>🏷 費目の編集（' + (kind === 'fixed' ? '敵１固定費' : '敵２変動費') + '）</h3><div class="setlist">';
+    var h = '<h3>🏷 費目の編集（' + kindLabel(kind) + '）</h3><div class="setlist">';
     CATEGORIES.forEach(function (c) {
       h += '<div class="catrow" onclick="openCatEdit(\'' + jstr(c.name) + '\')">'
         + '<span class="cemoji">' + (c.emoji || '🏷') + '</span>'
@@ -929,7 +1072,7 @@
     if (!name) { alert('費目の名前を入れてください'); return; }
     // 予算は費目名で管理しているため、名前は全タブを通してかぶらないようにする
     if (ALL_CATEGORIES.some(function (c) { return c.name === name && c.name !== catEditOrig; })) {
-      alert('同じ名前の費目がすでにあります（敵１固定費／敵２変動費どちらかで使われています）'); return;
+      alert('同じ名前の費目がすでにあります（敵１〜敵４のどれかで使われています）'); return;
     }
     var btn = document.getElementById('catSaveBtn');
     btn.disabled = true; btn.textContent = '保存中…';
