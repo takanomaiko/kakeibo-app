@@ -11,7 +11,7 @@
   header h1 { font-size: 18px; min-width: 8.5em; text-align: center; font-weight: 700; }
   header button { background: rgba(255,255,255,.25); border: none; color: #fff; width: 34px; height: 34px; border-radius: 50%; font-size: 14px; cursor: pointer; }
   #gear { position: absolute; right: 14px; top: 50%; transform: translateY(-50%); font-size: 16px; }
-  /* タブ（ふだん／固定費） */
+  /* タブ（敵１固定費／敵２変動費） */
   #tabs { position: sticky; top: 62px; z-index: 9; display: flex; gap: 8px; max-width: 560px; margin: 0 auto; padding: 10px 14px 4px; background: #fff7f5; }
   .tab { flex: 1; border: none; border-radius: 999px; padding: 9px 8px; font-size: 13px; font-weight: 700; font-family: inherit; cursor: pointer; background: #fdeaee; color: #c99aa8; transition: background .2s, color .2s; }
   .tab.on { background: linear-gradient(135deg, #ffb3c6, #ff8fab); color: #fff; box-shadow: 0 2px 7px rgba(255,143,171,.35); }
@@ -124,8 +124,8 @@
   <button id="gear" onclick="openSettings()">⚙️</button>
 </header>
 <nav id="tabs">
-  <button class="tab on" data-kind="variable" onclick="switchKind('variable')">ふだん</button>
-  <button class="tab" data-kind="fixed" onclick="switchKind('fixed')">固定費</button>
+  <button class="tab" data-kind="fixed" onclick="switchKind('fixed')">敵１固定費</button>
+  <button class="tab on" data-kind="variable" onclick="switchKind('variable')">敵２変動費</button>
 </nav>
 <main id="app"></main>
 <button id="fab" onclick="openSheet()">＋</button>
@@ -258,7 +258,7 @@
 
   var now = new Date();
   var y = now.getFullYear(), mo = now.getMonth();
-  var kind = 'variable';   // いま見ているタブ（'variable'＝ふだん／'fixed'＝固定費）
+  var kind = 'variable';   // いま見ているタブ（'variable'＝敵２変動費／'fixed'＝敵１固定費）
   var data = null;
   // ネットから取ってきたデータを一時的に持っておく箱
   var state = { uid: null, entries: [], budgets: {}, mbudgets: {} };
@@ -614,7 +614,7 @@
     if (!it) return;
     var itKind = kindOf(it);
     var catOpts = catOptionsFor(itKind, it.category);
-    var kindOpts = [['variable', 'ふだん'], ['fixed', '固定費']].map(function (p) {
+    var kindOpts = [['fixed', '敵１固定費'], ['variable', '敵２変動費']].map(function (p) {
       return '<option value="' + p[0] + '"' + (p[0] === itKind ? ' selected' : '') + '>' + p[1] + '</option>';
     }).join('');
     var pays = ['現金', 'カード', '電子マネー', 'その他'];
@@ -815,7 +815,7 @@
   /* ---- 費目の管理（追加・名前・アイコン・色・削除）---- */
   function openCatManager() {
     closeSettings();
-    var h = '<h3>🏷 費目の編集（' + (kind === 'fixed' ? '固定費' : 'ふだん') + '）</h3><div class="setlist">';
+    var h = '<h3>🏷 費目の編集（' + (kind === 'fixed' ? '敵１固定費' : '敵２変動費') + '）</h3><div class="setlist">';
     CATEGORIES.forEach(function (c) {
       h += '<div class="catrow" onclick="openCatEdit(\'' + jstr(c.name) + '\')">'
         + '<span class="cemoji">' + (c.emoji || '🏷') + '</span>'
@@ -873,7 +873,7 @@
     if (!name) { alert('費目の名前を入れてください'); return; }
     // 予算は費目名で管理しているため、名前は全タブを通してかぶらないようにする
     if (ALL_CATEGORIES.some(function (c) { return c.name === name && c.name !== catEditOrig; })) {
-      alert('同じ名前の費目がすでにあります（ふだん／固定費どちらかで使われています）'); return;
+      alert('同じ名前の費目がすでにあります（敵１固定費／敵２変動費どちらかで使われています）'); return;
     }
     var btn = document.getElementById('catSaveBtn');
     btn.disabled = true; btn.textContent = '保存中…';
