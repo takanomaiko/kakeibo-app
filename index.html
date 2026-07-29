@@ -376,6 +376,9 @@
     { name: '家のメンテ', emoji: '🔧', budget: 0, color: '#b0c0a0' },
     { name: 'プレゼント', emoji: '🎁', budget: 0, color: '#e0b0d0' }
   ];
+  // 収入の「内容」の選択肢（📊年間まとめ画面で使います）
+  // 増やしたいときはこの表に足してください。ここに無いものは「その他」で自由に書けます
+  var INCOME_NAMES = ['真治給料', '麻衣子給料', '賞与', '児童手当'];
   /* ▲▲▲ 設定はここまで ▲▲▲ */
 
   /* ============================================================
@@ -1337,6 +1340,20 @@
   }
 
   /* ---- 収入の入力シート ---- */
+  // 選択肢に無い内容（昔に自由入力したものなど）は「その他」あつかいにする
+  function incomeIsOther(shop) { return !!shop && INCOME_NAMES.indexOf(shop) === -1; }
+  function incomeNameOptions(shop) {
+    var sel = incomeIsOther(shop) ? '__other' : (shop || INCOME_NAMES[0]);
+    var h = INCOME_NAMES.map(function (n) {
+      return '<option value="' + esc(n) + '"' + (n === sel ? ' selected' : '') + '>' + esc(n) + '</option>';
+    }).join('');
+    return h + '<option value="__other"' + (sel === '__other' ? ' selected' : '') + '>その他（自由に入力）</option>';
+  }
+  function onIncomeNameChange() {
+    var other = document.getElementById('i_name').value === '__other';
+    document.getElementById('i_otherWrap').style.display = other ? 'block' : 'none';
+    if (other) document.getElementById('i_shop').focus();
+  }
   function openIncome(id) {
     incEditId = id || null;
     var it = incEditId ? state.entries.filter(function (e) { return e.id === incEditId; })[0] : null;
@@ -1347,7 +1364,9 @@
       + '<div class="field"><label>金額（円）</label><input type="number" id="i_amount" inputmode="numeric" value="' + (it ? esc(it.amount) : '') + '" placeholder="250000"></div>'
       + '<div class="field"><label>日付</label><input type="date" id="i_date" value="' + esc(d) + '"></div>'
       + '</div>'
-      + '<div class="field"><label>内容</label><input type="text" id="i_shop" value="' + (it ? esc(it.shop) : '') + '" placeholder="給料 / 賞与 / 児童手当 など"></div>'
+      + '<div class="field"><label>内容</label><select id="i_name" onchange="onIncomeNameChange()">' + incomeNameOptions(it ? it.shop : '') + '</select></div>'
+      + '<div class="field" id="i_otherWrap" style="display:' + (incomeIsOther(it ? it.shop : '') ? 'block' : 'none') + '">'
+      + '<label>その他の内容</label><input type="text" id="i_shop" value="' + (incomeIsOther(it ? it.shop : '') ? esc(it.shop) : '') + '" placeholder="例：メルカリ売上"></div>'
       + '<div class="field"><label>メモ（任意）</label><input type="text" id="i_memo" value="' + (it ? esc(it.memo || '') : '') + '"></div>'
       + '<button class="primaryBtn" id="incSaveBtn" onclick="saveIncome()">保存する</button>';
     if (it) h += '<button class="linkBtn" onclick="delIncome()">✕ この収入を削除</button>';
@@ -1362,12 +1381,15 @@
   async function saveIncome() {
     var amount = Number(document.getElementById('i_amount').value);
     if (!(amount > 0)) { alert('金額を入れてください'); return; }
+    var nameSel = document.getElementById('i_name').value;
+    var name = (nameSel === '__other') ? document.getElementById('i_shop').value.trim() : nameSel;
+    if (!name) { alert('内容を入れてください'); return; }
     var btn = document.getElementById('incSaveBtn');
     btn.disabled = true; btn.textContent = '保存中…';
     var row = {
       date: document.getElementById('i_date').value,
       amount: Math.round(amount),
-      shop: document.getElementById('i_shop').value || '収入',
+      shop: name,
       memo: document.getElementById('i_memo').value || '',
       category: '収入',
       pay: '',
