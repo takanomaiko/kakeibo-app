@@ -115,6 +115,14 @@
   header h1 { font-size: 18px; min-width: 8.5em; text-align: center; font-weight: 700; }
   header button { background: rgba(255,255,255,.25); border: none; color: #fff; width: 34px; height: 34px; border-radius: 50%; font-size: 14px; cursor: pointer; }
   #gear { position: absolute; right: 14px; top: 50%; transform: translateY(-50%); font-size: 16px; }
+  /* 🔄 今すぐメールを取り込むボタン（ヘッダー左） */
+  #mailBtn { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); font-size: 15px; display: none; }
+  body.mail-ready #mailBtn { display: block; }
+  #mailBtn.spinning { animation: spin 1s linear infinite; }
+  @keyframes spin { from { transform: translateY(-50%) rotate(0deg); } to { transform: translateY(-50%) rotate(360deg); } }
+  /* ふわっと出るお知らせ */
+  #toast { position: fixed; left: 50%; top: 72px; transform: translateX(-50%); z-index: 60; background: rgba(70,58,58,.9); color: #fff; font-size: 13px; font-weight: 700; padding: 9px 18px; border-radius: 999px; opacity: 0; pointer-events: none; transition: opacity .3s; max-width: 86%; text-align: center; box-shadow: 0 4px 14px rgba(0,0,0,.18); }
+  #toast.show { opacity: 1; }
   /* とても細い画面（iPhone SE 第1世代など）では ▶ と ⚙️ が重ならないよう少し詰める */
   @media (max-width: 340px) { header { gap: 8px; } header h1 { min-width: 7.5em; font-size: 16px; } }
   /* タブ（敵１固定費／敵２変動費） */
@@ -246,11 +254,13 @@
 </head>
 <body>
 <header>
+  <button id="mailBtn" onclick="fetchMailNow()" title="今すぐメールを取り込む">🔄</button>
   <button onclick="moveMonth(-1)">◀</button>
   <h1 id="ymLabel">…</h1>
   <button onclick="moveMonth(1)">▶</button>
   <button id="gear" onclick="openSettings()">⚙️</button>
 </header>
+<div id="toast"></div>
 <nav id="tabs">
   <button class="tab" data-kind="fixed" onclick="switchKind('fixed')"><b>敵１</b><span>固定費</span></button>
   <button class="tab on" data-kind="variable" onclick="switchKind('variable')"><b>敵２</b><span>変動費</span></button>
@@ -337,6 +347,14 @@
   var SB_URL = 'https://fexngnzutsgapjzguqaa.supabase.co';
   var SB_KEY = 'sb_publishable_YURvmJ6zAnnAmHAR9jLCaw_Cyz7i_RS';
   var sb = supabase.createClient(SB_URL, SB_KEY);
+
+  /* ============================================================
+     ▼▼▼ 「🔄 今すぐメールを取り込む」ボタンの接続先 ▼▼▼
+     GAS をウェブアプリとしてデプロイして出てきた URL（/exec で終わるもの）を入れます。
+     空のままだと 🔄 ボタンは出てきません。
+     ※ URL を知られても、ログイン証明がないと動かないようにしてあります
+     ============================================================ */
+  var GAS_FETCH_URL = '';
 
   /* ============================================================
      ▼▼▼ 費目（カテゴリ）と絵文字の設定 ▼▼▼
@@ -1440,6 +1458,61 @@
     if (yearOpen()) renderYear();
   }
 
+  /* ============================================================
+     ---- 🔄 今すぐメールを取り込む ----
+     GASのウェブアプリは「返事」を読めない決まり（CORS）があるので、
+     ①合図だけ送る → ②Supabaseを何回か見に行って、増えていたら知らせる
+     という進め方にしています。
+     ============================================================ */
+  var mailBusy = false;
+  function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+  function toast(msg, ms) {
+    var el = document.getElementById('toast');
+    el.textContent = msg;
+    el.className = 'show';
+    clearTimeout(toast._t);
+    toast._t = setTimeout(function () { el.className = ''; }, ms || 3200);
+  }
+  async function fetchMailNow() {
+    if (!GAS_FETCH_URL || mailBusy) return;
+    var btn = document.getElementById('mailBtn');
+    mailBusy = true;
+    btn.className = 'spinning';
+    toast('📬 メールを確認しています…', 30000);
+    try {
+      // ログイン証明（アクセストークン）を本文に入れて送る。URLには入れない
+      var s = await sb.auth.getSession();
+      var token = s.data.session && s.data.session.access_token;
+      if (!token) { toast('ログインし直してください🙏'); return; }
+
+      var before = state.entries.length;
+      try {
+        await fetch(GAS_FETCH_URL, {
+          method: 'POST',
+          mode: 'no-cors',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: token
+        });
+      } catch (e) { /* 返事は読めない決まりなので、ここは気にしない */ }
+
+      // 取り込みには数秒かかるので、3秒おきに最大8回ようすを見る
+      var added = 0;
+      for (var i = 0; i < 8; i++) {
+        await sleep(3000);
+        try { await fetchAll(); } catch (e) { continue; }
+        added = state.entries.length - before;
+        if (added > 0) break;
+      }
+      load();
+      if (yearOpen()) renderYear();
+      reopenDetailIfOpen();
+      toast(added > 0 ? '🌸 ' + added + '件 取り込みました' : '📭 新しいメールはありませんでした');
+    } finally {
+      mailBusy = false;
+      btn.className = '';
+    }
+  }
+
   /* ---- ログイン関係 ---- */
   async function initAuth() {
     var res = await sb.auth.getSession();
@@ -1449,6 +1522,8 @@
   async function onSignedIn(session) {
     state.uid = session.user.id;
     document.body.classList.add('signed-in');
+    // 接続先が設定してあるときだけ 🔄 ボタンを出す
+    document.body.classList.toggle('mail-ready', !!GAS_FETCH_URL);
     await refresh();
   }
   async function doLogin() {
@@ -1469,6 +1544,7 @@
     state = { uid: null, entries: [], budgets: {}, mbudgets: {} };
     closeSettings();
     document.body.classList.remove('signed-in');
+    document.body.classList.remove('mail-ready');
   }
 
   // スマホでアプリを開き直したら、最新のデータに自動で更新する
@@ -1476,6 +1552,7 @@
   document.addEventListener('visibilitychange', async function () {
     if (document.visibilityState !== 'visible') return;
     if (!state.uid) return;                                  // ログイン前は何もしない
+    if (mailBusy) return;                                    // 🔄 取り込み中はじゃましない
     if (Date.now() - lastFetchAt < 60000) return;            // 1分以内に取ったばかりなら何もしない
     if (document.querySelector('.overlay.show')) return;     // 入力シートを開いている間はじゃましない
     await refresh();
