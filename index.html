@@ -115,11 +115,13 @@
   header h1 { font-size: 18px; min-width: 8.5em; text-align: center; font-weight: 700; }
   header button { background: rgba(255,255,255,.25); border: none; color: #fff; width: 34px; height: 34px; border-radius: 50%; font-size: 14px; cursor: pointer; }
   #gear { position: absolute; right: 14px; top: 50%; transform: translateY(-50%); font-size: 16px; }
-  /* 🔄 今すぐメールを取り込むボタン（ヘッダー左） */
-  #mailBtn { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); font-size: 15px; display: none; }
-  body.mail-ready #mailBtn { display: block; }
-  #mailBtn.spinning { animation: spin 1s linear infinite; }
-  @keyframes spin { from { transform: translateY(-50%) rotate(0deg); } to { transform: translateY(-50%) rotate(360deg); } }
+  /* 今すぐメールを取り込むボタン（ヘッダー左）。
+     絵文字だと輪郭が四角くて回転が不自然なので、左右対称の丸いアイコンを描いています */
+  #mailBtn { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); display: none; align-items: center; justify-content: center; padding: 0; }
+  body.mail-ready #mailBtn { display: flex; }
+  #mailBtn svg { display: block; }
+  #mailBtn.spinning svg { animation: spin .9s linear infinite; transform-origin: 50% 50%; }
+  @keyframes spin { to { transform: rotate(360deg); } }
   /* ふわっと出るお知らせ */
   #toast { position: fixed; left: 50%; top: 72px; transform: translateX(-50%); z-index: 60; background: rgba(70,58,58,.9); color: #fff; font-size: 13px; font-weight: 700; padding: 9px 18px; border-radius: 999px; opacity: 0; pointer-events: none; transition: opacity .3s; max-width: 86%; text-align: center; box-shadow: 0 4px 14px rgba(0,0,0,.18); }
   #toast.show { opacity: 1; }
@@ -254,7 +256,13 @@
 </head>
 <body>
 <header>
-  <button id="mailBtn" onclick="fetchMailNow()" title="今すぐメールを取り込む">🔄</button>
+  <button id="mailBtn" onclick="fetchMailNow()" title="今すぐメールを取り込む" aria-label="今すぐメールを取り込む">
+    <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+      <polyline points="23 4 23 10 17 10"></polyline>
+      <polyline points="1 20 1 14 7 14"></polyline>
+      <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+    </svg>
+  </button>
   <button onclick="moveMonth(-1)">◀</button>
   <h1 id="ymLabel">…</h1>
   <button onclick="moveMonth(1)">▶</button>
