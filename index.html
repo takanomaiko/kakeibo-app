@@ -230,7 +230,12 @@
   /* 毎月テンプレのお知らせバー（タブのすぐ下に出る） */
   #tplBar { display: none; max-width: 560px; margin: 4px auto 0; padding: 0 14px; }
   #tplBar .tplBox { background: var(--tint); border-radius: 16px; padding: 12px 14px; }
+  #tplBar .tplBox + .tplBox { margin-top: 8px; }
   #tplBar .tplMsg { font-size: 13px; color: var(--tintFg); line-height: 1.55; }
+  /* メール取り込みのエラー用。どのタブでも同じ色（気づいてほしいので） */
+  #tplBar .tplBox.warn { background: #ffecec; border: 1.5px solid #f0bcbc; }
+  #tplBar .tplBox.warn .tplMsg { color: #b3565b; word-break: break-word; }
+  #tplBar .tplBox.warn .tplBtns button.ghost { color: #b3565b; border-color: #f0c4c4; }
   #tplBar .tplBtns { display: flex; gap: 8px; margin-top: 10px; }
   #tplBar .tplBtns button { flex: 1; border: none; border-radius: 12px; padding: 10px; font-family: inherit; font-size: 14px; font-weight: 700; color: #fff; background: linear-gradient(135deg, var(--g1), var(--g2)); cursor: pointer; }
   #tplBar .tplBtns button.ghost { background: none; color: var(--accent); border: 1.5px solid var(--line); }
@@ -502,7 +507,7 @@
   var kind = 'variable';   // いま見ているタブ（'variable'＝敵２変動費／'fixed'＝敵１固定費）
   var data = null;
   // ネットから取ってきたデータを一時的に持っておく箱
-  var state = { uid: null, entries: [], budgets: {}, mbudgets: {}, templates: [], tplKeys: {} };
+  var state = { uid: null, entries: [], budgets: {}, mbudgets: {}, templates: [], tplKeys: {}, runs: [] };
   var lastFetchAt = 0;   // 最後にデータを取ってきた時刻（開き直したときの自動更新用）
 
   function ymStr() { return y + '-' + ('0' + (mo + 1)).slice(-2); }
@@ -553,7 +558,8 @@
       sb.from('budgets').select('*'),
       sb.from('monthly_budgets').select('*'),
       sb.from('categories').select('*'),
-      sb.from('templates').select('*')
+      sb.from('templates').select('*'),
+      sb.from('job_runs').select('*').order('ran_at', { ascending: false }).limit(5)
     ]);
     if (res[0].error) throw res[0].error;
     if (res[1].error) throw res[1].error;
@@ -609,6 +615,8 @@
     // 毎月のテンプレ（templates テーブルが未作成でもアプリは動くように、エラーは無視）
     state.templates = (res[4] && !res[4].error) ? (res[4].data || []) : [];
     state.templates.sort(function (a, b) { return (a.sort || 0) - (b.sort || 0); });
+    // メール取り込みの実行記録（新しい順。job_runs が未作成でも動きます）
+    state.runs = (res[5] && !res[5].error) ? (res[5].data || []) : [];
     applyKind();
     lastFetchAt = Date.now();
   }
@@ -1085,6 +1093,7 @@
     h += '<button class="linkBtn" onclick="openCatManager()">🏷 費目を編集（追加・名前・色）</button>';
     h += '<button class="linkBtn" onclick="openTplManager()">🔁 毎月のテンプレ（きまった出費・収入）</button>';
     h += '<button class="linkBtn" onclick="openImport()">📥 データをまとめて取り込み</button>';
+    h += '<div class="setnote" style="margin:16px 0 0">📬 <b>メール取り込みのようす</b><br>' + lastRunText() + '</div>';
     h += '<button class="linkBtn" onclick="doLogout()">ログアウト</button>';
     var el = document.getElementById('setSheet');
     el.innerHTML = h;
@@ -1246,6 +1255,27 @@
   var TPL_FREQ = [['month', '毎月', '毎月'], ['even', '偶数月だけ（2・4・6…）', '偶数月'], ['odd', '奇数月だけ（1・3・5…）', '奇数月']];
   var tplDismissed = '';    // 「あとで」を押した月（アプリを開き直すとまた出ます）
   var tplEditId = null;
+  var mailWarnDismissed = 0;   // 「とじる」を押したエラーの番号
+
+  /* ---- メール取り込みの実行記録（job_runs）を読みやすくする ---- */
+  function runWhen(r) {
+    if (!r || !r.ran_at) return '';
+    var t = new Date(r.ran_at);
+    var how = { timer: '自動チェック', button: '🔄ボタン', manual: '手動' }[r.kind] || r.kind;
+    return (t.getMonth() + 1) + '/' + t.getDate() + ' '
+      + ('0' + t.getHours()).slice(-2) + ':' + ('0' + t.getMinutes()).slice(-2) + '（' + how + '）';
+  }
+  function lastRunText() {
+    var r = (state.runs || [])[0];
+    if (!r) return '📭 まだ取り込みの記録がありません';
+    if (!r.ok) return '⚠️ ' + runWhen(r) + ' エラー：' + r.msg;
+    var body = r.n ? r.n + '件 取り込みました' : '新しいメールはありませんでした';
+    if (r.voided) body += '／返品で' + r.voided + '件 取り消し';
+    // 1時間ごとに動くはずなので、しばらく記録が増えていなければ知らせる
+    var hours = (Date.now() - new Date(r.ran_at).getTime()) / 3600000;
+    var stale = hours > 3 ? '<br>⚠️ 3時間以上、自動チェックの記録がありません' : '';
+    return '✅ ' + runWhen(r) + ' ' + body + stale;
+  }
 
   function tplKinds() {
     return KINDS.map(function (k) { return { key: k.key, label: k.label }; })
@@ -1284,20 +1314,42 @@
   function renderTplBar() {
     var el = document.getElementById('tplBar');
     if (!el) return;
+    var h = '';
+
+    // ① メールの取り込みでエラーが出ていたら知らせる
+    //    （🔄ボタンは返事を読めないしくみなので、GASが書き残した記録を見ています）
+    var r = (state.runs || [])[0];
+    if (state.uid && r && !r.ok && mailWarnDismissed !== r.id) {
+      h += '<div class="tplBox warn">'
+        + '<div class="tplMsg">⚠️ <b>メールの取り込みでエラーが出ています</b><br>'
+        + esc(r.msg || '（内容なし）') + '<br><span style="opacity:.75">' + esc(runWhen(r)) + '</span></div>'
+        + '<div class="tplBtns"><button class="ghost" onclick="dismissMailWarn()">とじる</button></div>'
+        + '</div>';
+    }
+
+    // ② 今月ぶんが入っていない毎月テンプレ
     var ym = realYM();
     var list = state.uid ? pendingTpl(ym) : [];
-    if (!list.length || tplDismissed === ym) { el.innerHTML = ''; el.style.display = 'none'; return; }
-    var sum = list.reduce(function (s, t) { return s + (Number(t.amount) || 0); }, 0);
-    el.innerHTML = '<div class="tplBox">'
-      + '<div class="tplMsg">🔁 <b>' + Number(ym.slice(5, 7)) + '月の毎月テンプレ</b>が' + list.length + '件（' + yen(sum) + '）まだ入っていません</div>'
-      + '<div class="tplBtns">'
-      + '<button id="tplGo" onclick="applyTpl()">入れる</button>'
-      + '<button class="ghost" onclick="dismissTplBar()">あとで</button>'
-      + '</div></div>';
-    el.style.display = 'block';
+    if (list.length && tplDismissed !== ym) {
+      var sum = list.reduce(function (s, t) { return s + (Number(t.amount) || 0); }, 0);
+      h += '<div class="tplBox">'
+        + '<div class="tplMsg">🔁 <b>' + Number(ym.slice(5, 7)) + '月の毎月テンプレ</b>が' + list.length + '件（' + yen(sum) + '）まだ入っていません</div>'
+        + '<div class="tplBtns">'
+        + '<button id="tplGo" onclick="applyTpl()">入れる</button>'
+        + '<button class="ghost" onclick="dismissTplBar()">あとで</button>'
+        + '</div></div>';
+    }
+
+    el.innerHTML = h;
+    el.style.display = h ? 'block' : 'none';
   }
   function dismissTplBar() {
     tplDismissed = realYM();
+    renderTplBar();
+  }
+  function dismissMailWarn() {
+    var r = (state.runs || [])[0];
+    mailWarnDismissed = r ? r.id : 0;
     renderTplBar();
   }
   async function applyTpl() {
@@ -1734,6 +1786,19 @@
     clearTimeout(toast._t);
     toast._t = setTimeout(function () { el.className = ''; }, ms || 3200);
   }
+  /** いま記録されている「最後の実行」の時刻を取る（無ければ空） */
+  async function latestRunAt() {
+    var r = await sb.from('job_runs').select('ran_at').order('ran_at', { ascending: false }).limit(1);
+    return (!r.error && r.data && r.data[0]) ? r.data[0].ran_at : '';
+  }
+  /** since より新しい実行記録があれば返す（まだ無ければ null） */
+  async function newerRun(since) {
+    var r = await sb.from('job_runs').select('*').order('ran_at', { ascending: false }).limit(1);
+    if (r.error || !r.data || !r.data[0]) return null;
+    var row = r.data[0];
+    return (!since || row.ran_at > since) ? row : null;
+  }
+
   async function fetchMailNow() {
     if (!GAS_FETCH_URL || mailBusy) return;
     var btn = document.getElementById('mailBtn');
@@ -1746,7 +1811,9 @@
       var token = s.data.session && s.data.session.access_token;
       if (!token) { toast('ログインし直してください🙏'); return; }
 
-      var before = state.entries.length;
+      // 送る前の「最後の記録」の時刻をおぼえておく。
+      // これより新しい記録が書かれたら、それが今回の実行結果です。
+      var since = await latestRunAt();
       try {
         await fetch(GAS_FETCH_URL, {
           method: 'POST',
@@ -1756,18 +1823,27 @@
         });
       } catch (e) { /* 返事は読めない決まりなので、ここは気にしない */ }
 
-      // 取り込みには数秒かかるので、3秒おきに最大8回ようすを見る
-      var added = 0;
-      for (var i = 0; i < 8; i++) {
+      // 取り込みには数秒かかるので、3秒おきに最大10回ようすを見る
+      var run = null;
+      for (var i = 0; i < 10; i++) {
         await sleep(3000);
-        try { await fetchAll(); } catch (e) { continue; }
-        added = state.entries.length - before;
-        if (added > 0) break;
+        run = await newerRun(since);
+        if (run) break;
       }
+      try { await fetchAll(); } catch (e) { /* 読めなくても下の表示は出す */ }
       load();
       if (yearOpen()) renderYear();
       reopenDetailIfOpen();
-      toast(added > 0 ? '🌸 ' + added + '件 取り込みました' : '📭 新しいメールはありませんでした');
+
+      if (!run) {
+        toast('⚠️ 取り込み係から返事がありません。⚙️設定で状態を見てください', 7000);
+      } else if (!run.ok) {
+        toast('⚠️ エラー：' + run.msg, 9000);
+      } else if (run.n > 0) {
+        toast('🌸 ' + run.n + '件 取り込みました');
+      } else {
+        toast('📭 新しいメールはありませんでした');
+      }
     } finally {
       mailBusy = false;
       btn.className = '';
@@ -1802,7 +1878,7 @@
   }
   async function doLogout() {
     await sb.auth.signOut();
-    state = { uid: null, entries: [], budgets: {}, mbudgets: {}, templates: [], tplKeys: {} };
+    state = { uid: null, entries: [], budgets: {}, mbudgets: {}, templates: [], tplKeys: {}, runs: [] };
     closeSettings();
     renderTplBar();
     document.body.classList.remove('signed-in');
