@@ -217,10 +217,23 @@
   /* 費目の編集シートは費目一覧シートより上に出す */
   #catEditOverlay { z-index: 47; }
   #catEditSheet { z-index: 48; }
+  /* テンプレの編集シートは、テンプレ一覧より前面に出す */
+  #tplEditOverlay { z-index: 47; }
+  #tplEditSheet { z-index: 48; }
   .catrow { display: flex; align-items: center; gap: 10px; padding: 10px 2px; cursor: pointer; border-bottom: 1px solid var(--rowLine); }
   .catrow .cemoji { font-size: 20px; width: 1.5em; text-align: center; }
   .catrow .cname { flex: 1; font-size: 14px; }
   .catrow .cdot { width: 14px; height: 14px; border-radius: 4px; flex-shrink: 0; }
+  .catrow .csub { font-size: 11px; color: var(--muted2); margin-top: 2px; }
+  .catrow.coff { opacity: .45; }
+
+  /* 毎月テンプレのお知らせバー（タブのすぐ下に出る） */
+  #tplBar { display: none; max-width: 560px; margin: 4px auto 0; padding: 0 14px; }
+  #tplBar .tplBox { background: var(--tint); border-radius: 16px; padding: 12px 14px; }
+  #tplBar .tplMsg { font-size: 13px; color: var(--tintFg); line-height: 1.55; }
+  #tplBar .tplBtns { display: flex; gap: 8px; margin-top: 10px; }
+  #tplBar .tplBtns button { flex: 1; border: none; border-radius: 12px; padding: 10px; font-family: inherit; font-size: 14px; font-weight: 700; color: #fff; background: linear-gradient(135deg, var(--g1), var(--g2)); cursor: pointer; }
+  #tplBar .tplBtns button.ghost { background: none; color: var(--accent); border: 1.5px solid var(--line); }
   .swatches { display: flex; flex-wrap: wrap; gap: 10px; padding: 2px 0; }
   .swatch { width: 30px; height: 30px; border-radius: 50%; cursor: pointer; border: 3px solid transparent; }
   .swatch.sel { border-color: #fff; box-shadow: 0 0 0 2px var(--accent); }
@@ -250,7 +263,7 @@
   .loginmsg { font-size: 12px; margin-top: 12px; text-align: center; min-height: 1.2em; color: #e05d5d; }
 
   /* ログイン状態による表示切替 */
-  body:not(.signed-in) header, body:not(.signed-in) main, body:not(.signed-in) #fab, body:not(.signed-in) #tabs { display: none; }
+  body:not(.signed-in) header, body:not(.signed-in) main, body:not(.signed-in) #fab, body:not(.signed-in) #tabs, body:not(.signed-in) #tplBar { display: none !important; }
   body:not(.signed-in) #login { display: flex; }
 </style>
 </head>
@@ -275,6 +288,7 @@
   <button class="tab" data-kind="fixed_yearly" onclick="switchKind('fixed_yearly')"><b>敵３</b><span>不定期の固定費</span></button>
   <button class="tab" data-kind="var_yearly" onclick="switchKind('var_yearly')"><b>敵４</b><span>不定期の変動費</span></button>
 </nav>
+<div id="tplBar"></div>
 <main id="app"></main>
 <button id="fab" onclick="openSheet()">＋</button>
 
@@ -345,6 +359,12 @@
 <div id="catSheet" class="sheet"></div>
 <div id="catEditOverlay" class="overlay" onclick="closeCatEdit()"></div>
 <div id="catEditSheet" class="sheet"></div>
+
+<!-- 毎月テンプレのシート -->
+<div id="tplOverlay" class="overlay" onclick="closeTplManager()"></div>
+<div id="tplSheet" class="sheet"></div>
+<div id="tplEditOverlay" class="overlay" onclick="closeTplEdit()"></div>
+<div id="tplEditSheet" class="sheet"></div>
 
 <!-- Supabase のライブラリを読み込み -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -482,7 +502,7 @@
   var kind = 'variable';   // いま見ているタブ（'variable'＝敵２変動費／'fixed'＝敵１固定費）
   var data = null;
   // ネットから取ってきたデータを一時的に持っておく箱
-  var state = { uid: null, entries: [], budgets: {}, mbudgets: {} };
+  var state = { uid: null, entries: [], budgets: {}, mbudgets: {}, templates: [], tplKeys: {} };
   var lastFetchAt = 0;   // 最後にデータを取ってきた時刻（開き直したときの自動更新用）
 
   function ymStr() { return y + '-' + ('0' + (mo + 1)).slice(-2); }
@@ -532,12 +552,16 @@
       sb.from('entries').select('*'),
       sb.from('budgets').select('*'),
       sb.from('monthly_budgets').select('*'),
-      sb.from('categories').select('*')
+      sb.from('categories').select('*'),
+      sb.from('templates').select('*')
     ]);
     if (res[0].error) throw res[0].error;
     if (res[1].error) throw res[1].error;
     // 削除済み（deleted）の明細は表示しない。※列が未追加でも動くように client 側で除外
     state.entries = (res[0].data || []).filter(function (e) { return !e.deleted; });
+    // テンプレから入れた印。※削除した明細もふくめて集めるので、消した月がまた出てくることはない
+    state.tplKeys = {};
+    (res[0].data || []).forEach(function (e) { if (e.tpl_key) state.tplKeys[e.tpl_key] = true; });
     state.budgets = {};
     (res[1].data || []).forEach(function (r) { state.budgets[r.category] = r.amount; });
     // 月ごとの予算（monthly_budgets テーブルが未作成でもアプリは動くように、エラーは無視）
@@ -582,6 +606,9 @@
     } else {
       ALL_CATEGORIES = allDefaults();
     }
+    // 毎月のテンプレ（templates テーブルが未作成でもアプリは動くように、エラーは無視）
+    state.templates = (res[4] && !res[4].error) ? (res[4].data || []) : [];
+    state.templates.sort(function (a, b) { return (a.sort || 0) - (b.sort || 0); });
     applyKind();
     lastFetchAt = Date.now();
   }
@@ -652,6 +679,7 @@
     applyKind();
     document.getElementById('ymLabel').textContent = periodTitle();
     render(buildData());
+    renderTplBar();
   }
 
   function render(d) {
@@ -1055,6 +1083,7 @@
     h += '<button class="primaryBtn" id="setSaveBtn" onclick="saveSettings()">保存する</button>';
     h += '<button class="linkBtn" onclick="openYear()">📊 年間まとめ（収入と支出）</button>';
     h += '<button class="linkBtn" onclick="openCatManager()">🏷 費目を編集（追加・名前・色）</button>';
+    h += '<button class="linkBtn" onclick="openTplManager()">🔁 毎月のテンプレ（きまった出費・収入）</button>';
     h += '<button class="linkBtn" onclick="openImport()">📥 データをまとめて取り込み</button>';
     h += '<button class="linkBtn" onclick="doLogout()">ログアウト</button>';
     var el = document.getElementById('setSheet');
@@ -1205,6 +1234,230 @@
     openCatManager();
   }
   function throwIf(res) { if (res && res.error) throw res.error; return res; }
+
+  /* ============================================================
+     ---- 🔁 毎月のテンプレ ----
+     毎月きまって出ていく／入ってくるお金を登録しておくと、
+     その月にアプリを開いたとき「入れますか？」と聞いてくれます。
+     ・「毎月／偶数月だけ／奇数月だけ」が選べます（水道は2ヶ月ごと など）
+     ・入れたあとは、ふつうの明細と同じようにタップして金額を直せます
+     ・二重に入らないよう、entries の tpl_key に「どのテンプレの何月ぶんか」を書いています
+     ============================================================ */
+  var TPL_FREQ = [['month', '毎月', '毎月'], ['even', '偶数月だけ（2・4・6…）', '偶数月'], ['odd', '奇数月だけ（1・3・5…）', '奇数月']];
+  var tplDismissed = '';    // 「あとで」を押した月（アプリを開き直すとまた出ます）
+  var tplEditId = null;
+
+  function tplKinds() {
+    return KINDS.map(function (k) { return { key: k.key, label: k.label }; })
+      .concat([{ key: 'income', label: '💰収入' }]);
+  }
+  function realYM() {
+    var d = new Date();
+    return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2);
+  }
+  function tplKey(t, ym) { return 'tpl:' + t.id + ':' + ym; }
+  function freqLabel(f, short) {
+    for (var i = 0; i < TPL_FREQ.length; i++) if (TPL_FREQ[i][0] === (f || 'month')) return TPL_FREQ[i][short ? 2 : 1];
+    return '毎月';
+  }
+  /** その月のその日付（31日など無い日は、その月の最終日にまるめます） */
+  function tplDate(t, ym) {
+    var yy = Number(ym.slice(0, 4)), mm = Number(ym.slice(5, 7));
+    var last = new Date(yy, mm, 0).getDate();
+    var d = Math.min(Math.max(Number(t.day) || 1, 1), last);
+    return ym + '-' + ('0' + d).slice(-2);
+  }
+  /** 今月ぶんがまだ入っていないテンプレ（＝これから入れる候補） */
+  function pendingTpl(ym) {
+    var mon = Number(ym.slice(5, 7));
+    var isThisMonth = (ym === realYM());
+    var today = new Date().getDate();
+    return (state.templates || []).filter(function (t) {
+      if (t.enabled === false) return false;
+      var f = t.freq || 'month';
+      if (f === 'even' && mon % 2 !== 0) return false;
+      if (f === 'odd' && mon % 2 === 0) return false;
+      if (isThisMonth && (Number(t.day) || 1) > today) return false;   // その日が来るまでは出さない
+      return !state.tplKeys[tplKey(t, ym)];
+    });
+  }
+  function renderTplBar() {
+    var el = document.getElementById('tplBar');
+    if (!el) return;
+    var ym = realYM();
+    var list = state.uid ? pendingTpl(ym) : [];
+    if (!list.length || tplDismissed === ym) { el.innerHTML = ''; el.style.display = 'none'; return; }
+    var sum = list.reduce(function (s, t) { return s + (Number(t.amount) || 0); }, 0);
+    el.innerHTML = '<div class="tplBox">'
+      + '<div class="tplMsg">🔁 <b>' + Number(ym.slice(5, 7)) + '月の毎月テンプレ</b>が' + list.length + '件（' + yen(sum) + '）まだ入っていません</div>'
+      + '<div class="tplBtns">'
+      + '<button id="tplGo" onclick="applyTpl()">入れる</button>'
+      + '<button class="ghost" onclick="dismissTplBar()">あとで</button>'
+      + '</div></div>';
+    el.style.display = 'block';
+  }
+  function dismissTplBar() {
+    tplDismissed = realYM();
+    renderTplBar();
+  }
+  async function applyTpl() {
+    var ym = realYM();
+    var list = pendingTpl(ym);
+    if (!list.length) { renderTplBar(); return; }
+    var btn = document.getElementById('tplGo');
+    if (btn) { btn.disabled = true; btn.textContent = '入れています…'; }
+    var rows = list.map(function (t) {
+      var isInc = (t.kind === 'income');
+      return {
+        user_id: state.uid,
+        date: tplDate(t, ym),
+        amount: Math.round(Number(t.amount) || 0),
+        shop: t.shop || '（無題）',
+        category: isInc ? '収入' : (t.category || '未分類'),
+        pay: isInc ? '' : (t.pay || ''),
+        kind: t.kind || 'fixed',
+        memo: '毎月テンプレ',
+        tpl_key: tplKey(t, ym)
+      };
+    });
+    var res = await sb.from('entries').insert(rows);
+    if (btn) { btn.disabled = false; btn.textContent = '入れる'; }
+    if (res.error) { alert('登録に失敗：' + res.error.message); return; }
+    toast(rows.length + '件 入れました🌸');
+    await refresh();
+    if (yearOpen()) renderYear();
+  }
+
+  /* ---- テンプレの一覧 ---- */
+  function openTplManager() {
+    closeSettings();
+    var h = '<h3>🔁 毎月のテンプレ</h3>';
+    h += '<div class="setnote">毎月きまって出ていく（入ってくる）お金を登録しておくと、その月にアプリを開いたとき「入れますか？」と聞いてくれます。金額が月によって違うものは、入れたあとにタップして直せます。</div>';
+    if (!state.templates.length) {
+      h += '<div class="empty">まだテンプレがありません</div>';
+    } else {
+      h += '<div class="setlist">';
+      state.templates.forEach(function (t) {
+        var isInc = (t.kind === 'income');
+        var kdLabel = isInc ? '収入' : kindDef(t.kind).label;
+        h += '<div class="catrow' + (t.enabled === false ? ' coff' : '') + '" onclick="openTplEdit(\'' + jstr(t.id) + '\')">'
+          + '<span class="cemoji">' + (isInc ? '💰' : '🔁') + '</span>'
+          + '<span class="cname">' + esc(t.shop || '（無題）')
+          + '<div class="csub">' + esc(kdLabel) + '・' + freqLabel(t.freq, true)
+          + (t.day ? (Number(t.day) === 31 ? ' 月末' : ' ' + t.day + '日') : '')
+          + (t.enabled === false ? '・おやすみ中' : '') + '</div></span>'
+          + '<span class="setname">' + yen(t.amount || 0) + '</span>'
+          + '<span class="chev">❯</span></div>';
+      });
+      h += '</div>';
+    }
+    h += '<button class="primaryBtn" onclick="openTplEdit(null)">＋ 新しいテンプレを追加</button>';
+    h += '<button class="linkBtn" onclick="closeTplManager()">とじる</button>';
+    document.getElementById('tplSheet').innerHTML = h;
+    document.getElementById('tplOverlay').className = 'overlay show';
+    document.getElementById('tplSheet').style.display = 'block';
+  }
+  function closeTplManager() {
+    document.getElementById('tplOverlay').className = 'overlay';
+    document.getElementById('tplSheet').style.display = 'none';
+  }
+
+  /* ---- テンプレの追加・編集 ---- */
+  function openTplEdit(id) {
+    tplEditId = id;
+    var t = id ? state.templates.filter(function (x) { return x.id === id; })[0] : null;
+    if (id && !t) return;
+    t = t || { kind: 'fixed', category: '', shop: '', amount: 0, pay: '', day: 1, freq: 'month', enabled: true };
+    var kindOpts = tplKinds().map(function (k) {
+      return '<option value="' + k.key + '"' + (k.key === (t.kind || 'fixed') ? ' selected' : '') + '>' + esc(k.label) + '</option>';
+    }).join('');
+    var freqOpts = TPL_FREQ.map(function (f) {
+      return '<option value="' + f[0] + '"' + (f[0] === (t.freq || 'month') ? ' selected' : '') + '>' + esc(f[1]) + '</option>';
+    }).join('');
+    var dayOpts = '';
+    for (var d = 1; d <= 28; d++) dayOpts += '<option value="' + d + '"' + (d === (Number(t.day) || 1) ? ' selected' : '') + '>' + d + '日</option>';
+    dayOpts += '<option value="31"' + (Number(t.day) === 31 ? ' selected' : '') + '>月末</option>';
+    var pays = ['', '現金', 'カード', '口座振替', '電子マネー', 'その他'];
+    if (t.pay && pays.indexOf(t.pay) === -1) pays.splice(1, 0, t.pay);
+    var payOpts = pays.map(function (p) {
+      return '<option value="' + esc(p) + '"' + (p === (t.pay || '') ? ' selected' : '') + '>' + (p ? esc(p) : '（なし）') + '</option>';
+    }).join('');
+
+    var isInc = (t.kind === 'income');
+    var h = '<h3>' + (id ? '🔁 テンプレを編集' : '🔁 新しいテンプレ') + '</h3>'
+      + '<div class="field"><label>どこに入れる？</label><select id="t_kind" onchange="onTplKindChange()">' + kindOpts + '</select></div>'
+      + '<div class="field" id="t_catWrap" style="display:' + (isInc ? 'none' : 'block') + '"><label>費目</label>'
+      + '<select id="t_cat">' + catOptionsFor(isInc ? 'fixed' : (t.kind || 'fixed'), t.category) + '</select></div>'
+      + '<div class="field"><label>内容（' + (isInc ? '例：チエ子生活費' : '例：電気代') + '）</label>'
+      + '<input type="text" id="t_shop" value="' + esc(t.shop || '') + '" placeholder="チエ子生活費 など"></div>'
+      + '<div class="row2">'
+      + '<div class="field"><label>金額（円）</label><input type="number" id="t_amount" inputmode="numeric" value="' + esc(t.amount || 0) + '"></div>'
+      + '<div class="field"><label>毎月何日</label><select id="t_day">' + dayOpts + '</select></div>'
+      + '</div>'
+      + '<div class="field"><label>くりかえし</label><select id="t_freq">' + freqOpts + '</select></div>'
+      + '<div class="field" id="t_payWrap" style="display:' + (isInc ? 'none' : 'block') + '"><label>支払・カード</label><select id="t_pay">' + payOpts + '</select></div>'
+      + '<div class="setrow"><span class="setname">このテンプレを使う</span>'
+      + '<input type="checkbox" id="t_on" style="width:22px;height:22px"' + (t.enabled === false ? '' : ' checked') + '></div>'
+      + '<button class="primaryBtn" id="tplSaveBtn" onclick="saveTpl()">保存する</button>';
+    if (id) h += '<button class="linkBtn" onclick="delTpl()">✕ このテンプレを削除</button>';
+    h += '<button class="linkBtn" onclick="closeTplEdit()">とじる</button>';
+    document.getElementById('tplEditSheet').innerHTML = h;
+    document.getElementById('tplEditOverlay').className = 'overlay show';
+    document.getElementById('tplEditSheet').style.display = 'block';
+  }
+  function onTplKindChange() {
+    var k = document.getElementById('t_kind').value;
+    var isInc = (k === 'income');
+    document.getElementById('t_catWrap').style.display = isInc ? 'none' : 'block';
+    document.getElementById('t_payWrap').style.display = isInc ? 'none' : 'block';
+    if (!isInc) document.getElementById('t_cat').innerHTML = catOptionsFor(k, null);
+  }
+  function closeTplEdit() {
+    document.getElementById('tplEditOverlay').className = 'overlay';
+    document.getElementById('tplEditSheet').style.display = 'none';
+  }
+  async function saveTpl() {
+    var kindV = document.getElementById('t_kind').value;
+    var isInc = (kindV === 'income');
+    var shop = document.getElementById('t_shop').value.trim();
+    var amount = Number(document.getElementById('t_amount').value);
+    if (!shop) { alert('内容を入れてください'); return; }
+    if (!(amount > 0)) { alert('金額を入れてください'); return; }
+    var row = {
+      kind: kindV,
+      category: isInc ? '収入' : document.getElementById('t_cat').value,
+      shop: shop,
+      amount: Math.round(amount),
+      pay: isInc ? '' : document.getElementById('t_pay').value,
+      day: Number(document.getElementById('t_day').value) || 1,
+      freq: document.getElementById('t_freq').value,
+      enabled: document.getElementById('t_on').checked
+    };
+    var btn = document.getElementById('tplSaveBtn');
+    btn.disabled = true; btn.textContent = '保存中…';
+    var res = tplEditId
+      ? await sb.from('templates').update(row).eq('id', tplEditId)
+      : await sb.from('templates').insert(Object.assign({ user_id: state.uid }, row));
+    btn.disabled = false; btn.textContent = '保存する';
+    if (res.error) {
+      var m = String(res.error.message || '');
+      if (/templates/.test(m) || /does not exist|schema cache|relation/.test(m)) {
+        alert('テンプレの保存先テーブル（templates）がまだ作られていないようです。準備の手順を確認してください🙏');
+      } else { alert('保存に失敗：' + m); }
+      return;
+    }
+    closeTplEdit();
+    await refresh();
+    openTplManager();
+  }
+  async function delTpl() {
+    if (!confirm('このテンプレを削除しますか？\n（すでに家計簿に入れた記録は残ります）')) return;
+    var res = await sb.from('templates').delete().eq('id', tplEditId);
+    if (res.error) { alert('削除に失敗：' + res.error.message); return; }
+    closeTplEdit();
+    await refresh();
+    openTplManager();
+  }
 
   /* ---- まとめて取り込みシート ---- */
   function openImport() {
@@ -1549,8 +1802,9 @@
   }
   async function doLogout() {
     await sb.auth.signOut();
-    state = { uid: null, entries: [], budgets: {}, mbudgets: {} };
+    state = { uid: null, entries: [], budgets: {}, mbudgets: {}, templates: [], tplKeys: {} };
     closeSettings();
+    renderTplBar();
     document.body.classList.remove('signed-in');
     document.body.classList.remove('mail-ready');
   }
