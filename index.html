@@ -941,6 +941,11 @@
       + '<div class="field"><label>日付</label><input type="date" id="e_date" value="' + esc(String(it.date).slice(0, 10)) + '"></div>'
       + '</div>'
       + '<div class="field"><label>内容・お店</label><input type="text" id="e_shop" value="' + esc(it.shop) + '"></div>'
+      // メールに書かれていた元の店名。直したあとも残しておいて、あとで「この文字ならこの費目」を
+      // 見つけるための材料にします（書きかえてもこちらは変わりません）
+      + (it.shop_raw && it.shop_raw !== it.shop
+          ? '<div class="setnote" style="margin:-6px 0 12px">📮 メールの店名：<b>' + esc(it.shop_raw) + '</b></div>'
+          : '')
       + '<div class="field"><label>メモ（買ったもの・誰と など／任意）</label><input type="text" id="e_memo" value="' + esc(it.memo || '') + '" placeholder="○○とランチ など"></div>'
       + '<div class="row2">'
       + '<div class="field"><label>タブ</label><select id="e_kind" onchange="onEditKindChange()">' + kindOpts + '</select></div>'
