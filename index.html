@@ -187,6 +187,14 @@
   .field input[type="date"] { -webkit-appearance: none; appearance: none; }
   .field input[type="date"]::-webkit-date-and-time-value { text-align: left; margin: 0; min-width: 0; }
   .row2 { display: flex; gap: 10px; } .row2 .field { flex: 1 1 0; min-width: 0; }
+  /* 入力欄の中に出る「ぜんぶ消す」ボタン。文字が入っているときだけ出ます */
+  .clearWrap { position: relative; }
+  .clearWrap input { padding-right: 42px; }
+  .clearWrap .clearBtn { position: absolute; right: 9px; top: 50%; transform: translateY(-50%);
+    width: 26px; height: 26px; border: none; border-radius: 50%; background: var(--track); color: var(--muted);
+    font-size: 12px; line-height: 1; font-family: inherit; cursor: pointer; display: none; padding: 0; }
+  .clearWrap.has .clearBtn { display: block; }
+  .clearWrap .clearBtn:active { background: var(--tint); color: var(--tintFg); }
   .primaryBtn { width: 100%; border: none; border-radius: 14px; padding: 14px; font-size: 16px; font-weight: 700; color: #fff; background: linear-gradient(135deg, var(--g1), var(--g2)); margin-top: 4px; cursor: pointer; }
   .primaryBtn:disabled { opacity: .5; }
   .linkBtn { display: block; width: 100%; background: none; border: none; color: var(--accent); font-size: 13px; margin-top: 16px; cursor: pointer; text-decoration: underline; }
@@ -940,7 +948,11 @@
       + '<div class="field"><label>金額（円）</label><input type="number" id="e_amount" inputmode="numeric" value="' + esc(it.amount) + '"></div>'
       + '<div class="field"><label>日付</label><input type="date" id="e_date" value="' + esc(String(it.date).slice(0, 10)) + '"></div>'
       + '</div>'
-      + '<div class="field"><label>内容・お店</label><input type="text" id="e_shop" value="' + esc(it.shop) + '"></div>'
+      + '<div class="field"><label>内容・お店</label>'
+      + '<div class="clearWrap' + (it.shop ? ' has' : '') + '">'
+      + '<input type="text" id="e_shop" value="' + esc(it.shop) + '" oninput="toggleClear(this)">'
+      + '<button type="button" class="clearBtn" onclick="clearShopField()" aria-label="ぜんぶ消す">✕</button>'
+      + '</div></div>'
       // メールに書かれていた元の店名。直したあとも残しておいて、あとで「この文字ならこの費目」を
       // 見つけるための材料にします（書きかえてもこちらは変わりません）
       + (it.shop_raw && it.shop_raw !== it.shop
@@ -957,6 +969,17 @@
     document.getElementById('editSheet').innerHTML = h;
     document.getElementById('editOverlay').className = 'overlay show';
     document.getElementById('editSheet').style.display = 'block';
+  }
+  /* ---- 入力欄の「ぜんぶ消す」ボタン ---- */
+  function toggleClear(inp) {
+    inp.parentNode.className = 'clearWrap' + (inp.value ? ' has' : '');
+  }
+  function clearShopField() {
+    var inp = document.getElementById('e_shop');
+    if (!inp) return;
+    inp.value = '';
+    toggleClear(inp);
+    inp.focus();                     // 消したあとすぐ打てるように
   }
   function closeEdit() {
     document.getElementById('editOverlay').className = 'overlay';
