@@ -265,6 +265,34 @@
   }
   #year.show { display: flex; }
   #year .dHead .ynav { margin-left: auto; display: flex; gap: 8px; flex-shrink: 0; }
+
+  /* カード明細との照合（4タブを横断して見るので、専用の色にしています） */
+  #recon {
+    --bg: #f5fbf9; --g1: #a8ded0; --g2: #7fc9b6;
+    --gShadow35: rgba(127,201,182,.35); --gShadow50: rgba(127,201,182,.5);
+    --track: #e8f2ef; --tint: #f1fbf7; --tintFg: #3f8d78; --accent: #57a08d;
+    --muted: #93a49f; --muted2: #adbab6; --ink: #3f4a47;
+    --cardShadow10: rgba(120,170,155,.12); --cardShadow08: rgba(120,170,155,.10);
+    --line: #e2efea; --inputBg: #fafffd; --inputBg2: #f7fdfb;
+    --faint: #dbe7e2; --chev: #c6d8d2; --rowLine: #eef6f3;
+    position: fixed; inset: 0; z-index: 42; display: none; flex-direction: column;
+    background: var(--bg); color: var(--ink);
+  }
+  #recon.show { display: flex; }
+  .rcRow { background: #fff; border-radius: 14px; padding: 10px 12px; margin-bottom: 6px; display: flex; align-items: flex-start; gap: 10px; box-shadow: 0 2px 6px var(--cardShadow08); }
+  .rcRow input[type="checkbox"] { width: 20px; height: 20px; margin: 1px 0 0; flex-shrink: 0; accent-color: var(--g2); }
+  .rcMain { flex: 1; min-width: 0; }
+  .rcTop { display: flex; gap: 8px; align-items: baseline; }
+  .rcDate { font-size: 12px; color: var(--muted); flex-shrink: 0; }
+  .rcShop { font-size: 14px; word-break: break-all; }
+  .rcAmt { font-size: 15px; font-weight: 700; flex-shrink: 0; }
+  .rcSel { display: flex; gap: 6px; margin-top: 7px; }
+  .rcSel select { flex: 1 1 0; min-width: 0; border: 1.5px solid var(--line); border-radius: 10px; padding: 6px 8px; font-size: 13px; background: var(--inputBg); color: var(--ink); font-family: inherit; }
+  .rcHead { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 22px 2px 8px; }
+  .rcHead .rcTtl { font-size: 14px; font-weight: 700; color: var(--accent); }
+  .rcHead button { background: none; border: none; color: var(--accent); font-size: 12px; text-decoration: underline; cursor: pointer; font-family: inherit; flex-shrink: 0; }
+  .rcFile { border: 2px dashed var(--faint); border-radius: 14px; padding: 16px 12px; text-align: center; background: var(--inputBg2); }
+  .rcFile input { font-size: 13px; font-family: inherit; color: var(--ink); }
   .plus { color: #4caf8e; } .minus { color: #e05d5d; }
   .sumrow { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; font-size: 13px; color: var(--muted); }
   .sumrow b { font-size: 15px; color: var(--ink); }
@@ -328,6 +356,15 @@
   <!-- 収入の入力シート（この中に置くと、まとめ画面と同じ色になります） -->
   <div id="incOverlay" class="overlay" onclick="closeIncome()"></div>
   <div id="incSheet" class="sheet"></div>
+</div>
+
+<!-- カード明細との照合（打ち漏れをあぶり出す画面） -->
+<div id="recon">
+  <div class="dHead">
+    <button onclick="closeRecon()">✕</button>
+    <div><div class="dTtl">🔍 カード明細と照合</div><div class="dSub" id="rcSub">明細のCSVと家計簿を見くらべます</div></div>
+  </div>
+  <div class="dBody" id="rcBody"></div>
 </div>
 
 <!-- ログイン画面 -->
@@ -1121,6 +1158,7 @@
     h += '<button class="linkBtn" onclick="openCatManager()">🏷 費目を編集（追加・名前・色）</button>';
     h += '<button class="linkBtn" onclick="openTplManager()">🔁 毎月のテンプレ（きまった出費・収入）</button>';
     h += '<button class="linkBtn" onclick="openImport()">📥 データをまとめて取り込み</button>';
+    h += '<button class="linkBtn" onclick="openRecon()">🔍 カード明細と照合（打ち漏れさがし）</button>';
     h += '<div class="setnote" style="margin:16px 0 0">📬 <b>メール取り込みのようす</b><br>' + lastRunText() + '</div>';
     h += '<button class="linkBtn" onclick="doLogout()">ログアウト</button>';
     var el = document.getElementById('setSheet');
@@ -1598,6 +1636,307 @@
     closeImport();
     alert(parsed.rows.length + '件を取り込みました🌸');
     await refresh();
+  }
+
+  /* ============================================================
+     ---- カード明細と照合（打ち漏れをあぶり出す）----
+
+     カード会社の通知メールは、来ないことがあります（継続課金や電子マネーなど）。
+     そこで月に1回、カードの利用明細（CSV）と家計簿を見くらべて、
+     「明細にあるのに家計簿に無いもの」をあぶり出します。
+
+     ▼ 見くらべ方
+       お店の名前は明細とメールでまったく違うので（コメダ珈琲店 ⇔ KOMEDACOFFEE）、
+       「利用日 ＋ 金額」で突き合わせます。同じ日に同じ金額が2件あれば2件として数えます。
+     ============================================================ */
+  var rcState = { rows: [], files: [], pay: '', result: null };
+
+  function openRecon() {
+    closeSettings();
+    rcState = { rows: [], files: [], pay: '', result: null };
+    document.getElementById('recon').classList.add('show');
+    renderRecon();
+  }
+  function closeRecon() { document.getElementById('recon').classList.remove('show'); }
+
+  /* ---- CSVを読む ---- */
+  // 三井住友カードのCSVは Shift_JIS のことが多いので、文字コードを自動で見分けます
+  function rcReadFile(file) {
+    return new Promise(function (resolve, reject) {
+      var fr = new FileReader();
+      fr.onerror = function () { reject(new Error(file.name + ' を読めませんでした')); };
+      fr.onload = function () {
+        var txt;
+        try { txt = new TextDecoder('utf-8', { fatal: true }).decode(fr.result); }
+        catch (e) { txt = new TextDecoder('shift_jis').decode(fr.result); }
+        resolve(txt.replace(/^﻿/, ''));
+      };
+      fr.readAsArrayBuffer(file);
+    });
+  }
+  // 1行をカンマで分ける（"…" でくくられた中のカンマは区切りにしません）
+  function rcSplit(line) {
+    var out = [], cur = '', q = false;
+    for (var i = 0; i < line.length; i++) {
+      var ch = line.charAt(i);
+      if (q) {
+        if (ch === '"') { if (line.charAt(i + 1) === '"') { cur += '"'; i++; } else q = false; }
+        else cur += ch;
+      } else if (ch === '"') q = true;
+      else if (ch === ',') { out.push(cur); cur = ''; }
+      else cur += ch;
+    }
+    out.push(cur);
+    return out;
+  }
+  function rcDate(s) {
+    var m = String(s || '').trim().match(/^(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})$/);
+    if (!m) return '';
+    var d = m[1] + '-' + ('0' + m[2]).slice(-2) + '-' + ('0' + m[3]).slice(-2);
+    return isRealDate(d) ? d : '';
+  }
+  // 5列目より後ろにある、最初の「数字だけの値」を金額とみなします
+  // （支払月の '26/09 などは数字にならないので自然に飛ばされます）
+  function rcAmount(c) {
+    for (var i = 4; i < c.length; i++) {
+      var n = Number(String(c[i]).replace(/[,¥￥\s"]/g, ''));
+      if (n > 0) return Math.round(n);
+    }
+    return 0;
+  }
+  function rcParse(txt) {
+    var rows = [], skipped = 0;
+    txt.split(/\r?\n/).forEach(function (line) {
+      if (!line.trim()) return;
+      var c = rcSplit(line);
+      var d = rcDate(c[0]);
+      var a = rcAmount(c);
+      // 日付でない行（見出しなど）と、金額がない行（返品のマイナスなど）は飛ばします
+      if (!d || !a) { skipped++; return; }
+      rows.push({
+        date: d,
+        shop: String(c[1] || '').replace(/\s+/g, ' ').trim() || '（無題）',
+        who: String(c[2] || '').trim(),
+        amount: a
+      });
+    });
+    return { rows: rows, skipped: skipped };
+  }
+
+  async function onReconFiles(input) {
+    var files = Array.prototype.slice.call(input.files || []);
+    if (!files.length) return;
+    document.getElementById('rcSub').textContent = '読み込み中…';
+    var all = [], names = [], skipped = 0;
+    try {
+      for (var i = 0; i < files.length; i++) {
+        var txt = await rcReadFile(files[i]);
+        var r = rcParse(txt);
+        all = all.concat(r.rows);
+        skipped += r.skipped;
+        names.push(files[i].name + '（' + r.rows.length + '件）');
+      }
+    } catch (e) { alert(e.message || e); return; }
+    if (!all.length) {
+      alert('明細のデータが見つかりませんでした。\nカードの利用明細のCSVかどうか確かめてください。');
+      document.getElementById('rcSub').textContent = '明細のCSVと家計簿を見くらべます';
+      return;
+    }
+    rcState.rows = all;
+    rcState.files = names;
+    rcState.skipped = skipped;
+    runRecon();
+  }
+
+  /* ---- 突き合わせる ---- */
+  function rcNorm(s) { return String(s || '').normalize('NFKC').toUpperCase().replace(/\s+/g, ''); }
+  // 前に同じお店を登録していたら、そのときの費目・タブを覚えておいて次から初期値にします
+  function rcShopMemory() {
+    var m = {};
+    state.entries.forEach(function (e) {
+      if (kindOf(e) === 'income') return;
+      var k = rcNorm(e.shop);
+      if (!k) return;
+      if (!m[k] || String(e.date) > m[k].date) m[k] = { date: String(e.date), category: e.category, kind: kindOf(e) };
+    });
+    return m;
+  }
+  function runRecon() {
+    var rows = rcState.rows.slice();
+    var from = rows[0].date, to = rows[0].date;
+    rows.forEach(function (r) { if (r.date < from) from = r.date; if (r.date > to) to = r.date; });
+
+    // 家計簿側（収入はのぞく・明細と同じ期間だけ）
+    var dbMap = {};
+    state.entries.forEach(function (e) {
+      if (kindOf(e) === 'income') return;
+      if (String(e.date) < from || String(e.date) > to) return;
+      var k = e.date + '|' + Number(e.amount);
+      (dbMap[k] = dbMap[k] || []).push(e);
+    });
+
+    // 明細を「日付｜金額」ごとにまとめる
+    var byKey = {};
+    rows.forEach(function (r) { (byKey[r.date + '|' + r.amount] = byKey[r.date + '|' + r.amount] || []).push(r); });
+
+    var mem = rcShopMemory();
+    var missing = [], matched = 0;
+    Object.keys(byKey).forEach(function (k) {
+      var list = byKey[k], have = (dbMap[k] || []).length;
+      matched += Math.min(list.length, have);
+      list.slice(have).forEach(function (r) {          // 明細のほうが多い＝その分が抜けている
+        var hit = mem[rcNorm(r.shop)];
+        r.kind = hit ? hit.kind : 'variable';
+        r.category = hit ? hit.category : '未分類';
+        missing.push(r);
+      });
+    });
+    missing.sort(function (a, b) { return a.date < b.date ? -1 : (a.date > b.date ? 1 : a.amount - b.amount); });
+
+    // 家計簿にあって明細に無いもの（カードを選んだときだけ。他のカードや現金が混ざらないように）
+    var extra = [];
+    if (rcState.pay) {
+      Object.keys(dbMap).forEach(function (k) {
+        var mine = dbMap[k].filter(function (e) { return String(e.pay || '') === rcState.pay; });
+        var over = mine.length - (byKey[k] ? byKey[k].length : 0);
+        if (over > 0) mine.slice(mine.length - over).forEach(function (e) { extra.push(e); });
+      });
+      extra.sort(function (a, b) { return a.date < b.date ? -1 : 1; });
+    }
+
+    rcState.result = { from: from, to: to, missing: missing, extra: extra, matched: matched, total: rows.length };
+    renderRecon();
+  }
+
+  /* ---- 画面 ---- */
+  function rcPayOptions() {
+    var cnt = {};
+    state.entries.forEach(function (e) {
+      if (kindOf(e) === 'income') return;
+      var p = String(e.pay || '').trim();
+      if (p) cnt[p] = (cnt[p] || 0) + 1;
+    });
+    var list = Object.keys(cnt).sort(function (a, b) { return cnt[b] - cnt[a]; });
+    var h = '<option value="">えらんでください</option>';
+    list.forEach(function (p) {
+      h += '<option value="' + esc(p) + '"' + (p === rcState.pay ? ' selected' : '') + '>' + esc(p) + '（' + cnt[p] + '件）</option>';
+    });
+    return h;
+  }
+  function onReconPayChange(sel) {
+    rcState.pay = sel.value;
+    if (rcState.rows.length) runRecon(); else renderRecon();
+  }
+  function rcMd(dateStr) { var p = String(dateStr).split('-'); return Number(p[1]) + '/' + Number(p[2]); }
+
+  function renderRecon() {
+    var el = document.getElementById('rcBody');
+    var h = '';
+
+    h += '<div class="setnote">カードの利用明細のCSVを読み込むと、<b>家計簿に入っていない支払い</b>を見つけます。'
+       + '<br>通知メールが来ない支払い（継続課金など）は、ここでしか気づけません。</div>';
+
+    h += '<div class="field"><label>このCSVはどのカードのもの？</label>'
+       + '<select onchange="onReconPayChange(this)">' + rcPayOptions() + '</select></div>';
+    if (!rcState.pay) {
+      h += '<div class="settotal" style="text-align:left">えらばなくても「足りないもの」は出せます。'
+         + 'えらぶと「家計簿にあるのに明細に無いもの」も出せます。</div>';
+    }
+
+    h += '<div class="rcFile"><input type="file" accept=".csv,text/csv" multiple onchange="onReconFiles(this)">'
+       + '<div class="settotal" style="text-align:center;margin:10px 2px 0">何枚でも選べます（2ヶ月ぶん・2枚のカードなど）</div></div>';
+
+    var r = rcState.result;
+    if (r) {
+      document.getElementById('rcSub').textContent = r.from.replace(/-/g, '/') + ' 〜 ' + r.to.replace(/-/g, '/');
+      h += '<div class="setnote" style="margin-top:14px">📄 ' + esc(rcState.files.join('　')) + '</div>';
+      h += '<div class="card"><div class="sumrow"><span>明細にあった支払い</span><b>' + r.total + '件</b></div>'
+         + '<div class="sumrow"><span>家計簿と一致</span><b>' + r.matched + '件</b></div>'
+         + '<div class="sumrow"><span>家計簿に入っていない</span><b class="' + (r.missing.length ? 'minus' : 'plus') + '">' + r.missing.length + '件</b></div>'
+         + '</div>';
+
+      if (r.missing.length) {
+        var sum = r.missing.reduce(function (a, x) { return a + x.amount; }, 0);
+        h += '<div class="rcHead"><span class="rcTtl">📥 家計簿に入れる（' + yen(sum) + '）</span>'
+           + '<button onclick="rcCheckAll(true)">ぜんぶ選ぶ</button>'
+           + '<button onclick="rcCheckAll(false)">ぜんぶ外す</button></div>';
+        r.missing.forEach(function (x, i) {
+          h += '<div class="rcRow">'
+            + '<input type="checkbox" data-i="' + i + '" checked>'
+            + '<div class="rcMain">'
+            +   '<div class="rcTop"><span class="rcDate">' + rcMd(x.date) + '</span><span class="rcShop">' + esc(x.shop) + '</span></div>'
+            +   '<div class="rcSel">'
+            +     '<select data-kind="' + i + '" onchange="onReconKindChange(' + i + ')">' + rcKindOptions(x.kind) + '</select>'
+            +     '<select data-cat="' + i + '">' + catOptionsFor(x.kind, x.category) + '</select>'
+            +   '</div>'
+            + '</div>'
+            + '<div class="rcAmt">' + yen(x.amount) + '</div>'
+            + '</div>';
+        });
+        h += '<button class="primaryBtn" id="rcAddBtn" style="margin-top:12px" onclick="addReconRows()">えらんだものを家計簿に入れる</button>';
+      } else {
+        h += '<div class="empty">🌸 抜けはありませんでした</div>';
+      }
+
+      if (rcState.pay) {
+        h += '<div class="rcHead"><span class="rcTtl">⚠️ 家計簿にあるのに明細に無い（' + r.extra.length + '件）</span></div>';
+        if (r.extra.length) {
+          h += '<div class="settotal" style="text-align:left">二重に入っていないか、日付や金額がちがっていないか確かめてください。まだ明細に反映されていないだけのこともあります。</div>';
+          r.extra.forEach(function (e) {
+            h += '<div class="item" style="cursor:pointer" onclick="openEdit(\'' + jstr(e.id) + '\')">'
+              + '<div class="info"><div class="shop">' + esc(e.shop) + '</div><div class="meta">' + rcMd(e.date) + '　' + esc(e.category) + '</div></div>'
+              + '<div class="amt">' + yen(e.amount) + '</div><span class="editcue">✏️</span></div>';
+          });
+        } else {
+          h += '<div class="empty">🌸 ありません</div>';
+        }
+      }
+      h += '<div class="settotal" style="text-align:left;margin-top:18px">※ お店の名前は明細とメールで表記がちがうため、<b>利用日と金額</b>で見くらべています。'
+         + '同じ日に同じ金額の支払いが2件あるときも、2件として数えます。</div>';
+    }
+
+    el.innerHTML = h;
+    el.scrollTop = 0;
+  }
+  function rcKindOptions(sel) {
+    return KINDS.map(function (k) {
+      return '<option value="' + k.key + '"' + (k.key === sel ? ' selected' : '') + '>' + esc(k.label) + '</option>';
+    }).join('');
+  }
+  function onReconKindChange(i) {
+    var k = document.querySelector('#rcBody select[data-kind="' + i + '"]').value;
+    document.querySelector('#rcBody select[data-cat="' + i + '"]').innerHTML = catOptionsFor(k, null);
+  }
+  function rcCheckAll(on) {
+    document.querySelectorAll('#rcBody input[data-i]').forEach(function (c) { c.checked = on; });
+  }
+  async function addReconRows() {
+    var picks = [];
+    document.querySelectorAll('#rcBody input[data-i]').forEach(function (chk) {
+      if (!chk.checked) return;
+      var i = chk.getAttribute('data-i');
+      var x = rcState.result.missing[Number(i)];
+      if (!x) return;
+      picks.push({
+        user_id: state.uid,
+        date: x.date,
+        amount: x.amount,
+        shop: x.shop,
+        category: document.querySelector('#rcBody select[data-cat="' + i + '"]').value,
+        kind: document.querySelector('#rcBody select[data-kind="' + i + '"]').value,
+        pay: rcState.pay || 'カード'
+      });
+    });
+    if (!picks.length) { alert('入れるものが選ばれていません'); return; }
+    if (!confirm(picks.length + '件を家計簿に入れます。よろしいですか？')) return;
+    var btn = document.getElementById('rcAddBtn');
+    btn.disabled = true; btn.textContent = '入れています…';
+    var res = await sb.from('entries').insert(picks);
+    btn.disabled = false; btn.textContent = 'えらんだものを家計簿に入れる';
+    if (res.error) { alert('取り込みに失敗：' + res.error.message); return; }
+    await refresh();
+    runRecon();                      // 入れたぶんを引いて、もう一度見くらべる
+    alert(picks.length + '件を家計簿に入れました🌸');
   }
 
   /* ============================================================
