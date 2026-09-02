@@ -400,6 +400,10 @@
 <div id="impOverlay" class="overlay" onclick="closeImport()"></div>
 <div id="impSheet" class="sheet"></div>
 
+<!-- CSVで書き出すシート -->
+<div id="expOverlay" class="overlay" onclick="closeExport()"></div>
+<div id="expSheet" class="sheet"></div>
+
 <!-- 明細の編集シート -->
 <div id="editOverlay" class="overlay" onclick="closeEdit()"></div>
 <div id="editSheet" class="sheet"></div>
@@ -1164,6 +1168,7 @@
     h += '<button class="linkBtn" onclick="openCatManager()">🏷 費目を編集（追加・名前・色）</button>';
     h += '<button class="linkBtn" onclick="openTplManager()">🔁 毎月のテンプレ（きまった出費・収入）</button>';
     h += '<button class="linkBtn" onclick="openImport()">📥 データをまとめて取り込み</button>';
+    h += '<button class="linkBtn" onclick="openExport()">📤 CSVで書き出す（バックアップ・提出用）</button>';
     h += '<button class="linkBtn" onclick="openRecon()">🔍 カード明細と照合（打ち漏れさがし）</button>';
     h += '<div class="setnote" style="margin:16px 0 0">📬 <b>メール取り込みのようす</b><br>' + lastRunText() + '</div>';
     h += '<button class="linkBtn" onclick="doLogout()">ログアウト</button>';
@@ -1651,6 +1656,118 @@
     closeTplEdit();
     await refresh();
     openTplManager();
+  }
+
+  /* ============================================================
+     ---- CSVで書き出す（バックアップ・提出用）----
+     ぜんぶの明細はアプリが最初から持っているので、書き出しはネットにつながず一瞬で終わります。
+
+     ▼ 文字コードについて（大事）
+       ファイルの先頭に「BOM」という目印（﻿）を1文字つけています。
+       これが無いと、Windowsのエクセルで開いたときに日本語が文字化けします。
+       Mac の Numbers でもエクセルでも、この形なら大丈夫です。
+
+     ▼ 収入もふくめます
+       「タブ」の列に 敵１〜敵４ か「収入」が入るので、あとで分けられます。
+       金額はどちらもプラスの数字です（マイナスにはしません）。
+     ============================================================ */
+  var EXP_COLS = ['日付', 'タブ', '費目', '内容', 'メモ', '金額', '支払・カード'];
+
+  /** CSVの1マス分にする（カンマ・改行・引用符が入っていても壊れないようにする） */
+  function csvCell(v) {
+    return '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+  }
+  /** 書き出す明細をえらぶ。scope = 'month' | 'year' | 'all' */
+  function expRows(scope) {
+    var pre = scope === 'month' ? ymStr() : (scope === 'year' ? String(y) : '');
+    return (state.entries || [])
+      .filter(function (e) { return !pre || String(e.date).slice(0, pre.length) === pre; })
+      .sort(function (a, b) { return String(a.date) < String(b.date) ? -1 : (String(a.date) > String(b.date) ? 1 : 0); });
+  }
+  /** 明細をCSVの文字列にする */
+  function buildCsv(scope, withMemo) {
+    var cols = EXP_COLS.filter(function (c) { return withMemo || c !== 'メモ'; });
+    var lines = [cols.map(csvCell).join(',')];
+    expRows(scope).forEach(function (e) {
+      var row = {
+        '日付': e.date,
+        'タブ': e.kind === 'income' ? '収入' : kindDef(e.kind).label,
+        '費目': e.category || '',
+        '内容': e.shop || '',
+        'メモ': e.memo || '',
+        '金額': Math.round(Number(e.amount) || 0),
+        '支払・カード': e.pay || ''
+      };
+      lines.push(cols.map(function (c) { return csvCell(row[c]); }).join(','));
+    });
+    return '﻿' + lines.join('\r\n') + '\r\n';   // 先頭のBOMで文字化けを防ぐ
+  }
+  function openExport() {
+    closeSettings();
+    var h = '<h3>📤 CSVで書き出す</h3>';
+    h += '<div class="setnote">エクセルやNumbersで開ける形で保存します。<b>バックアップ</b>にも、だれかに<b>見せる用</b>にも使えます。</div>';
+    h += '<div class="field"><label>どこまで書き出す？</label>'
+      + '<select id="expScope" onchange="updateExpInfo()">'
+      + '<option value="month">今の月（' + y + '年' + (mo + 1) + '月）</option>'
+      + '<option value="year">今の年（' + y + '年）</option>'
+      + '<option value="all" selected>ぜんぶ（バックアップ用）</option>'
+      + '</select></div>';
+    h += '<div class="setrow"><span class="setname">メモの列を入れる</span>'
+      + '<input type="checkbox" id="expMemo" checked onchange="updateExpInfo()" style="width:22px;height:22px"></div>';
+    h += '<div class="setnote" style="margin-top:2px">メモには買ったものや感想が入っています。'
+      + '<b>人に見せるときは外す</b>と安心です 🙂</div>';
+    h += '<div class="settotal" id="expInfo"></div>';
+    h += '<button class="primaryBtn" onclick="doExport()">CSVをダウンロード</button>';
+    h += '<button class="linkBtn" onclick="copyCsv()">📋 かわりに文字でコピーする</button>';
+    h += '<button class="linkBtn" onclick="closeExport()">とじる</button>';
+    document.getElementById('expSheet').innerHTML = h;
+    updateExpInfo();
+    document.getElementById('expOverlay').className = 'overlay show';
+    document.getElementById('expSheet').style.display = 'block';
+  }
+  function closeExport() {
+    document.getElementById('expOverlay').className = 'overlay';
+    document.getElementById('expSheet').style.display = 'none';
+  }
+  function expScope() { var s = document.getElementById('expScope'); return s ? s.value : 'all'; }
+  function expWithMemo() { var c = document.getElementById('expMemo'); return !c || c.checked; }
+  function updateExpInfo() {
+    var rows = expRows(expScope());
+    var el = document.getElementById('expInfo');
+    if (!el) return;
+    if (!rows.length) { el.textContent = 'この期間の明細はありません'; return; }
+    el.textContent = rows.length + '件（' + rows[0].date + ' 〜 ' + rows[rows.length - 1].date + '）';
+  }
+  function expFileName() {
+    var s = expScope();
+    var when = s === 'month' ? ymStr() : (s === 'year' ? String(y) : 'ぜんぶ');
+    return 'かんたん家計簿_' + when + '.csv';
+  }
+  function doExport() {
+    var rows = expRows(expScope());
+    if (!rows.length) { alert('この期間の明細はありません'); return; }
+    var blob = new Blob([buildCsv(expScope(), expWithMemo())], { type: 'text/csv;charset=utf-8;' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = expFileName();
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    toast(rows.length + '件 書き出しました📤');
+  }
+  /** ダウンロードがうまくいかない端末むけの逃げ道（コピーしてメールや表計算に貼る） */
+  async function copyCsv() {
+    var rows = expRows(expScope());
+    if (!rows.length) { alert('この期間の明細はありません'); return; }
+    var text = buildCsv(expScope(), expWithMemo()).replace(/^﻿/, '');
+    try {
+      await navigator.clipboard.writeText(text);
+      toast(rows.length + '件 コピーしました📋');
+    } catch (err) {
+      alert('コピーできませんでした。ダウンロードのほうをお試しください。');
+    }
   }
 
   /* ---- まとめて取り込みシート ---- */
