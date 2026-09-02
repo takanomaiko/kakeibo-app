@@ -538,7 +538,8 @@
     ['Amazon Master', '#a5744e'],   // 〃（英語表記のとき）
     ['ゴールド', '#4a90d9'],         // まいこ／Ｏｌｉｖｅ ゴールド（固定費カード） → 青いマル
     ['Olive',   '#e8b93a'],         // しんじ／Ｏｌｉｖｅ（変動費カード） → 黄色のマル
-    ['三井住友', '#4caf8e']          // まいこ／三井住友カードＶＩＳＡ（ＮＬ）家族カード → 緑のマル
+    ['三井住友', '#4caf8e'],         // まいこ／三井住友カードＶＩＳＡ（ＮＬ）家族カード → 緑のマル
+    ['イオン',   '#c0559b']          // まいこ／イオンカード（ネットスーパー用） → 紫ピンクのマル
   ];
   function cardColor(pay) {
     var p = String(pay || '').normalize('NFKC').toUpperCase();
@@ -1368,17 +1369,18 @@
     var d = Math.min(Math.max(Number(t.day) || 1, 1), last);
     return ym + '-' + ('0' + d).slice(-2);
   }
-  /** 今月ぶんがまだ入っていないテンプレ（＝これから入れる候補） */
+  /** 今月ぶんがまだ入っていないテンプレ（＝これから入れる候補）
+   *  ★月のはじめに、その月に出ていくものをまとめて先に入れられるようにしています。
+   *    （以前は「その日が来るまで出さない」ようにしていましたが、
+   *      5日ぶんを5日すぎてから聞かれるより、1日に聞いて先に入れたい、というご希望で変更）
+   *    明細の日付はテンプレに設定した日（5日など）のままなので、予算の見え方は変わりません。 */
   function pendingTpl(ym) {
     var mon = Number(ym.slice(5, 7));
-    var isThisMonth = (ym === realYM());
-    var today = new Date().getDate();
     return (state.templates || []).filter(function (t) {
       if (t.enabled === false) return false;
       var f = t.freq || 'month';
       if (f === 'even' && mon % 2 !== 0) return false;
       if (f === 'odd' && mon % 2 === 0) return false;
-      if (isThisMonth && (Number(t.day) || 1) > today) return false;   // その日が来るまでは出さない
       return !state.tplKeys[tplKey(t, ym)];
     });
   }
@@ -1406,7 +1408,7 @@
       h += '<div class="tplBox">'
         + '<div class="tplMsg">🔁 <b>' + Number(ym.slice(5, 7)) + '月の毎月テンプレ</b>が' + list.length + '件（' + yen(sum) + '）まだ入っていません</div>'
         + '<div class="tplBtns">'
-        + '<button id="tplGo" onclick="applyTpl()">入れる</button>'
+        + '<button id="tplGo" onclick="openTplConfirm()">中身を見る</button>'
         + '<button class="ghost" onclick="dismissTplBar()">あとで</button>'
         + '</div></div>';
     }
@@ -1423,11 +1425,75 @@
     mailWarnDismissed = r ? r.id : 0;
     renderTplBar();
   }
-  async function applyTpl() {
+  /* ---- 入れる前に中身を見せる画面 ----
+     「1件入れますか？」ではなく、何がいくらで入るのかを一覧で見てから決められるようにしています。
+     今月だけ見送りたいものは、チェックを外せばそれだけ入りません。
+     ※シートは「🔁 毎月のテンプレ」と同じ入れもの（tplSheet）を使いまわしています。 */
+  function openTplConfirm() {
     var ym = realYM();
     var list = pendingTpl(ym);
     if (!list.length) { renderTplBar(); return; }
-    var btn = document.getElementById('tplGo');
+    var h = '<h3>🔁 ' + Number(ym.slice(5, 7)) + '月に入れるもの</h3>';
+    h += '<div class="setnote">中身をたしかめてから入れてください。今月は見送りたいものは、チェックを外すと入りません。金額がちがうときは、入れたあとに明細をタップして直せます。</div>';
+    h += '<div class="setlist">';
+    list.forEach(function (t) {
+      var isInc = (t.kind === 'income');
+      var d = tplDate(t, ym);
+      h += '<label class="catrow">'
+        + '<input type="checkbox" class="tplChk" data-id="' + esc(t.id) + '" data-amount="' + (Number(t.amount) || 0) + '"'
+        + ' checked onchange="updateTplConfirmSum()" style="width:22px;height:22px;flex:none">'
+        + '<span class="cemoji">' + (isInc ? '💰' : '🔁') + '</span>'
+        + '<span class="cname">' + esc(t.shop || '（無題）')
+        + '<div class="csub">' + Number(d.slice(8, 10)) + '日・'
+        + esc(isInc ? '収入' : kindDef(t.kind).label)
+        + (isInc ? '' : '・' + esc(t.category || '未分類'))
+        + (isInc || !t.pay ? '' : '・' + esc(t.pay))
+        + '</div></span>'
+        + '<span class="setname">' + yen(t.amount || 0) + '</span>'
+        + '</label>';
+    });
+    h += '</div>';
+    h += '<div class="setrow" style="border-top:1.5px solid var(--line);padding-top:10px">'
+      + '<span class="setname"><b>合計</b></span>'
+      + '<span class="setname" id="tplConfirmSum"></span></div>';
+    h += '<button class="primaryBtn" id="tplGoBtn" onclick="applyTpl()"></button>';
+    h += '<button class="linkBtn" onclick="closeTplConfirm()">とじる</button>';
+    document.getElementById('tplSheet').innerHTML = h;
+    document.getElementById('tplOverlay').className = 'overlay show';
+    document.getElementById('tplSheet').style.display = 'block';
+    updateTplConfirmSum();
+  }
+  /** チェックの数と合計を、ボタンと合計欄に反映する */
+  function updateTplConfirmSum() {
+    var n = 0, sum = 0;
+    Array.prototype.forEach.call(document.querySelectorAll('#tplSheet .tplChk'), function (c) {
+      if (!c.checked) return;
+      n++;
+      sum += Number(c.getAttribute('data-amount')) || 0;
+    });
+    var s = document.getElementById('tplConfirmSum');
+    if (s) s.innerHTML = '<b>' + yen(sum) + '</b>';
+    var btn = document.getElementById('tplGoBtn');
+    if (btn) {
+      btn.disabled = !n;
+      btn.style.opacity = n ? '' : '.45';
+      btn.textContent = n ? ('この' + n + '件を入れる') : 'えらんでください';
+    }
+  }
+  function closeTplConfirm() { closeTplManager(); }   // 同じシートなので閉じ方も同じ
+
+  async function applyTpl() {
+    var ym = realYM();
+    var list = pendingTpl(ym);
+    // 確認画面のチェックが入っているものだけにしぼる
+    var checks = document.querySelectorAll('#tplSheet .tplChk');
+    if (checks.length) {
+      var on = {};
+      Array.prototype.forEach.call(checks, function (c) { if (c.checked) on[c.getAttribute('data-id')] = true; });
+      list = list.filter(function (t) { return on[t.id]; });
+    }
+    if (!list.length) { renderTplBar(); return; }
+    var btn = document.getElementById('tplGoBtn');
     if (btn) { btn.disabled = true; btn.textContent = '入れています…'; }
     var rows = list.map(function (t) {
       var isInc = (t.kind === 'income');
@@ -1444,8 +1510,13 @@
       };
     });
     var res = await sb.from('entries').insert(rows);
-    if (btn) { btn.disabled = false; btn.textContent = '入れる'; }
-    if (res.error) { alert('登録に失敗：' + res.error.message); return; }
+    if (res.error) {
+      if (btn) btn.disabled = false;
+      updateTplConfirmSum();               // ボタンの文字をもとに戻す
+      alert('登録に失敗：' + res.error.message);
+      return;
+    }
+    closeTplConfirm();
     toast(rows.length + '件 入れました🌸');
     await refresh();
     if (yearOpen()) renderYear();
@@ -1455,7 +1526,7 @@
   function openTplManager() {
     closeSettings();
     var h = '<h3>🔁 毎月のテンプレ</h3>';
-    h += '<div class="setnote">毎月きまって出ていく（入ってくる）お金を登録しておくと、その月にアプリを開いたとき「入れますか？」と聞いてくれます。金額が月によって違うものは、入れたあとにタップして直せます。</div>';
+    h += '<div class="setnote">毎月きまって出ていく（入ってくる）お金を登録しておくと、<b>月がかわったとき</b>に「今月これを入れますか？」と一覧で聞いてくれます。その日が来るのを待たずに、月のはじめにまとめて入れられます。金額が月によって違うものは、入れたあとにタップして直せます。</div>';
     if (!state.templates.length) {
       h += '<div class="empty">まだテンプレがありません</div>';
     } else {
