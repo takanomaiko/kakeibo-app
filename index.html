@@ -1842,11 +1842,11 @@
        お店の名前は明細とメールでまったく違うので（コメダ珈琲店 ⇔ KOMEDACOFFEE）、
        「利用日 ＋ 金額」で突き合わせます。同じ日に同じ金額が2件あれば2件として数えます。
      ============================================================ */
-  var rcState = { rows: [], files: [], pay: '', result: null };
+  var rcState = { rows: [], files: [], pay: '', result: null, unpaired: {} };
 
   function openRecon() {
     closeSettings();
-    rcState = { rows: [], files: [], pay: '', result: null };
+    rcState = { rows: [], files: [], pay: '', result: null, unpaired: {} };
     document.getElementById('recon').classList.add('show');
     renderRecon();
   }
@@ -1987,18 +1987,119 @@
     missing.sort(function (a, b) { return a.date < b.date ? -1 : (a.date > b.date ? 1 : a.amount - b.amount); });
 
     // 家計簿にあって明細に無いもの（カードを選んだときだけ。他のカードや現金が混ざらないように）
-    var extra = [];
+    //
+    // ★「⚠️明細に無い」に出すのは、そのカードの記録だけ（きびしめ）。
+    //   でも「🔁金額がちがうだけかも」をさがすときは、**支払方法が空か「カード」の記録もふくめます**。
+    //   毎月テンプレから入れた記録は支払が「カード」という大ざっぱな値になっていて、
+    //   カード名で絞ると候補から外れてしまい、組が見つからず**二重登録**になってしまうためです。
+    var PAIRABLE_PAY = ['', 'カード'];       // 「どのカードか決めていない」あつかいにするもの
+    var extra = [], pairPool = [];
     if (rcState.pay) {
       Object.keys(dbMap).forEach(function (k) {
+        var used = byKey[k] ? byKey[k].length : 0;
+        // ⚠️「明細に無い」に出すぶん（そのカードの記録だけ）
         var mine = dbMap[k].filter(function (e) { return String(e.pay || '') === rcState.pay; });
-        var over = mine.length - (byKey[k] ? byKey[k].length : 0);
+        var over = mine.length - used;
         if (over > 0) mine.slice(mine.length - over).forEach(function (e) { extra.push(e); });
+        // 🔁 組さがしに使うぶん（支払が空や「カード」のものもふくめる）
+        var loose = dbMap[k].filter(function (e) {
+          var pay = String(e.pay || '');
+          return pay === rcState.pay || PAIRABLE_PAY.indexOf(pay) !== -1;
+        });
+        var over2 = loose.length - used;
+        if (over2 > 0) loose.slice(loose.length - over2).forEach(function (e) { pairPool.push(e); });
       });
       extra.sort(function (a, b) { return a.date < b.date ? -1 : 1; });
     }
 
-    rcState.result = { from: from, to: to, missing: missing, extra: extra, matched: matched, total: rows.length };
+    var p = rcMakePairs(missing, pairPool);
+    // 組になったものは「⚠️明細に無い」からも消す
+    var paired = {};
+    p.pairs.forEach(function (x) { paired[x.entry.id] = true; });
+    rcState.result = {
+      from: from, to: to, pairs: p.pairs, matched: matched, total: rows.length,
+      missing: p.missing,
+      extra: extra.filter(function (e) { return !paired[e.id]; })
+    };
     renderRecon();
+  }
+
+  /* ============================================================
+     ---- 「金額がちがうだけかも」のペアさがし ----
+     電気代のように毎月ちがう金額のものは、毎月テンプレに「だいたいの額」で先に入れておきます。
+     すると照合したとき、ひとつの支払いが
+       「明細にあるのに家計簿に無い（＝実額）」＋「家計簿にあるのに明細に無い（＝概算）」
+     の2件に見えてしまいます。
+     そこで「日付が近くて金額がちがうだけ」の組を見つけて、ワンタップで実額に直せるようにします。
+
+     ▼ 見つける条件（あやまって組にしないよう、控えめにしてあります）
+       ・日付のちがいが 3日以内
+       ・金額のちがいが「大きいほうの半分」以内
+       ・ひとつの記録は1組にしか使わない（金額がいちばん近いものを選ぶ）
+     ▼ ちがったときは「別のお支払いです」を押せば、ふつうの一覧に戻ります
+     ============================================================ */
+  var RC_PAIR_DAYS = 3;        // 日付のちがいをどこまで同じ支払いとみなすか
+  var RC_PAIR_RATIO = 0.5;     // 金額のちがいをどこまで許すか（大きいほうに対する割合）
+
+  function rcDayDiff(a, b) {
+    return Math.abs(Date.parse(a + 'T00:00:00') - Date.parse(b + 'T00:00:00')) / 864e5;
+  }
+  /** ユーザーが「別のお支払いです」と言った組は、もう作らない */
+  function rcPairKey(m, e) { return m.date + '|' + m.amount + '||' + e.id; }
+
+  function rcMakePairs(missing, extra) {
+    var pairs = [], usedM = {}, usedE = {};
+    if (!extra.length) return { pairs: pairs, missing: missing, extra: extra };
+
+    // 金額のちがいが小さい組から先に決める
+    var cand = [];
+    extra.forEach(function (e, ei) {
+      missing.forEach(function (m, mi) {
+        if (rcDayDiff(m.date, String(e.date)) > RC_PAIR_DAYS) return;
+        var gap = Math.abs(m.amount - Number(e.amount));
+        if (gap > Math.max(m.amount, Number(e.amount)) * RC_PAIR_RATIO) return;
+        if (rcState.unpaired[rcPairKey(m, e)]) return;    // 「別もの」と言われた組
+        cand.push({ mi: mi, ei: ei, gap: gap });
+      });
+    });
+    cand.sort(function (a, b) { return a.gap - b.gap; });
+    cand.forEach(function (c) {
+      if (usedM[c.mi] || usedE[c.ei]) return;
+      usedM[c.mi] = usedE[c.ei] = true;
+      pairs.push({ bill: missing[c.mi], entry: extra[c.ei] });
+    });
+    pairs.sort(function (a, b) { return a.bill.date < b.bill.date ? -1 : 1; });
+    return {
+      pairs: pairs,
+      missing: missing.filter(function (_, i) { return !usedM[i]; }),
+      extra: extra.filter(function (_, i) { return !usedE[i]; })
+    };
+  }
+
+  /** 家計簿の記録を、明細の日付と金額に合わせる */
+  async function rcFixPair(i) {
+    var p = rcState.result.pairs[i];
+    if (!p) return;
+    var btn = document.getElementById('rcFixBtn' + i);
+    if (btn) { btn.disabled = true; btn.textContent = '直しています…'; }
+    var res = await sb.from('entries')
+      .update({ date: p.bill.date, amount: p.bill.amount })
+      .eq('id', p.entry.id);
+    if (res.error) {
+      if (btn) { btn.disabled = false; btn.textContent = '明細に合わせる'; }
+      alert('直せませんでした：' + res.error.message);
+      return;
+    }
+    toast(p.entry.shop + ' を ' + yen(p.bill.amount) + ' に直しました🌸');   // toast は textContent なので esc しない
+    await refresh();
+    runRecon();                       // 直したぶんは次から「一致」になります
+  }
+  /** 「これは別のお支払いです」＝組にしないで、ふつうの一覧に戻す */
+  function rcUnpair(i) {
+    var p = rcState.result.pairs[i];
+    if (!p) return;
+    rcState.unpaired[rcPairKey(p.bill, p.entry)] = true;
+    runRecon();
   }
 
   /* ---- 画面 ---- */
@@ -2033,7 +2134,8 @@
        + '<select onchange="onReconPayChange(this)">' + rcPayOptions() + '</select></div>';
     if (!rcState.pay) {
       h += '<div class="settotal" style="text-align:left">えらばなくても「足りないもの」は出せます。'
-         + 'えらぶと「家計簿にあるのに明細に無いもの」も出せます。</div>';
+         + '<b>えらぶと</b>「家計簿にあるのに明細に無いもの」と、'
+         + '<b>「金額がちがうだけかも」のワンタップ修正</b>も使えます。</div>';
     }
 
     h += '<div class="rcFile"><input type="file" accept=".csv,text/csv" multiple onchange="onReconFiles(this)">'
@@ -2046,7 +2148,31 @@
       h += '<div class="card"><div class="sumrow"><span>明細にあった支払い</span><b>' + r.total + '件</b></div>'
          + '<div class="sumrow"><span>家計簿と一致</span><b>' + r.matched + '件</b></div>'
          + '<div class="sumrow"><span>家計簿に入っていない</span><b class="' + (r.missing.length ? 'minus' : 'plus') + '">' + r.missing.length + '件</b></div>'
+         + ((r.pairs && r.pairs.length) ? '<div class="sumrow"><span>金額がちがうだけかも</span><b>' + r.pairs.length + '件</b></div>' : '')
          + '</div>';
+
+      // ① 金額がちがうだけかもしれない組（電気代など、毎月額が変わるもの）
+      if (r.pairs && r.pairs.length) {
+        h += '<div class="rcHead"><span class="rcTtl">🔁 金額がちがうだけかも（' + r.pairs.length + '件）</span></div>';
+        h += '<div class="settotal" style="text-align:left">日付が近くて金額だけちがう組が見つかりました。'
+           + '同じお支払いなら「<b>明細に合わせる</b>」で実際の金額に直せます。</div>';
+        r.pairs.forEach(function (p, i) {
+          var diff = p.bill.amount - Number(p.entry.amount);
+          h += '<div class="rcRow" style="display:block">'
+            + '<div class="rcTop" style="margin-bottom:6px"><span class="rcDate">' + rcMd(String(p.entry.date)) + '</span>'
+            +   '<span class="rcShop"><b>' + esc(p.entry.shop) + '</b></span></div>'
+            + '<div class="sumrow"><span>いま家計簿にある金額</span><b>' + yen(p.entry.amount) + '</b></div>'
+            + '<div class="sumrow"><span>明細の金額（' + rcMd(p.bill.date) + '　' + esc(p.bill.shop) + '）</span>'
+            +   '<b>' + yen(p.bill.amount) + '</b></div>'
+            + '<div class="sumrow"><span>ちがい</span><b class="' + (diff > 0 ? 'minus' : 'plus') + '">'
+            +   (diff > 0 ? '+' : '') + yen(diff).replace('¥-', '-¥') + '</b></div>'
+            + '<div class="rcSel" style="margin-top:9px">'
+            +   '<button class="primaryBtn" id="rcFixBtn' + i + '" style="margin:0;flex:1" onclick="rcFixPair(' + i + ')">明細に合わせる</button>'
+            + '</div>'
+            + '<button class="linkBtn" style="margin:6px 0 0" onclick="rcUnpair(' + i + ')">これは別のお支払いです</button>'
+            + '</div>';
+        });
+      }
 
       if (r.missing.length) {
         var sum = r.missing.reduce(function (a, x) { return a + x.amount; }, 0);
