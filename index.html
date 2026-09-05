@@ -1374,6 +1374,19 @@
     var d = Math.min(Math.max(Number(t.day) || 1, 1), last);
     return ym + '-' + ('0' + d).slice(-2);
   }
+  /* ---- 「（仮）」の印 ----
+     電気代のように毎月ちがう金額のものは、テンプレから「だいたいの額」で先に入れます。
+     あとから明細で実額に直すので、それまでは内容のうしろに「（仮）」をつけて見分けられるようにします。
+     照合の［明細に合わせる］を押すと、金額を直すのと一緒に「（仮）」も自動で取れます。 */
+  var TPL_TENTATIVE = '（仮）';
+  /** うしろの「（仮）」を取る（半角カッコで書かれていても取れます） */
+  function stripTentative(s) { return String(s == null ? '' : s).replace(/[（(]\s*仮\s*[）)]\s*$/, '').trim(); }
+  /** テンプレから入れるときの「内容」。仮のものには（仮）をつける */
+  function tplShop(t) {
+    var base = String(t.shop || '（無題）').trim();
+    return t.is_estimate ? base + TPL_TENTATIVE : base;
+  }
+
   /* ---- テンプレの金額を決める ----
      ふつうは登録した金額をそのまま使います。
      ただし「去年の同じ月と同じ金額にする」をオンにすると、
@@ -1389,11 +1402,12 @@
        ※さがすときは「内容」の名前で照合します。去年と名前がちがうと見つかりません。 */
   function tplLastYearAmount(t, ym) {
     var prefix = (Number(ym.slice(0, 4)) - 1) + '-' + ym.slice(5, 7);   // 1年前の同じ月
-    var want = String(t.shop || '').trim();
+    // ★「（仮）」がついたままの記録も見つけられるように、両方から外して見くらべます
+    var want = stripTentative(t.shop);
     var sum = 0, found = false;
     (state.entries || []).forEach(function (e) {
       if (String(e.date).slice(0, 7) !== prefix) return;
-      if (String(e.shop || '').trim() !== want) return;
+      if (stripTentative(e.shop) !== want) return;
       if ((e.kind || 'variable') !== (t.kind || 'fixed')) return;
       sum += Math.round(Number(e.amount) || 0);
       found = true;
@@ -1488,7 +1502,7 @@
         + '<input type="checkbox" class="tplChk" data-id="' + esc(t.id) + '" data-amount="' + amt + '"'
         + ' checked onchange="updateTplConfirmSum()" style="width:22px;height:22px;flex:none">'
         + '<span class="cemoji">' + (isInc ? '💰' : '🔁') + '</span>'
-        + '<span class="cname">' + esc(t.shop || '（無題）')
+        + '<span class="cname">' + esc(tplShop(t))
         + '<div class="csub">' + Number(d.slice(8, 10)) + '日・'
         + esc(isInc ? '収入' : kindDef(t.kind).label)
         + (isInc ? '' : '・' + esc(t.category || '未分類'))
@@ -1547,7 +1561,7 @@
         user_id: state.uid,
         date: tplDate(t, ym),
         amount: tplAmount(t, ym),
-        shop: t.shop || '（無題）',
+        shop: tplShop(t),
         category: isInc ? '収入' : (t.category || '未分類'),
         pay: isInc ? '' : (t.pay || ''),
         kind: t.kind || 'fixed',
@@ -1586,7 +1600,8 @@
           + '<div class="csub">' + esc(kdLabel) + '・' + freqLabel(t.freq, true)
           + (t.day ? (Number(t.day) === 31 ? ' 月末' : ' ' + t.day + '日') : '')
           + (t.enabled === false ? '・おやすみ中' : '')
-          + (t.use_last_year ? '<br>📅 去年の同じ月と同じ金額にする' : '') + '</div></span>'
+          + (t.use_last_year ? '<br>📅 去年の同じ月と同じ金額にする' : '')
+          + (t.is_estimate ? '<br>📝 仮の金額（明細で直すまで「（仮）」がつく）' : '') + '</div></span>'
           + '<span class="setname">' + yen(t.amount || 0) + '</span>'
           + '<span class="chev">❯</span></div>';
       });
@@ -1639,6 +1654,10 @@
       + '<div class="setrow"><span class="setname">📅 去年の同じ月と同じ金額にする</span>'
       + '<input type="checkbox" id="t_ly" style="width:22px;height:22px"' + (t.use_last_year ? ' checked' : '') + '></div>'
       + '<div class="setnote" style="margin:2px 0 12px" id="t_lyNote"></div>'
+      + '<div class="setrow"><span class="setname">📝 これは仮の金額（あとで明細で直す）</span>'
+      + '<input type="checkbox" id="t_est" onchange="updateTplEstNote()" style="width:22px;height:22px"'
+      + (t.is_estimate ? ' checked' : '') + '></div>'
+      + '<div class="setnote" style="margin:2px 0 12px" id="t_estNote"></div>'
       + '<div class="field" id="t_payWrap" style="display:' + (isInc ? 'none' : 'block') + '"><label>支払・カード</label><select id="t_pay">' + payOpts + '</select></div>'
       + '<div class="setrow"><span class="setname">このテンプレを使う</span>'
       + '<input type="checkbox" id="t_on" style="width:22px;height:22px"' + (t.enabled === false ? '' : ' checked') + '></div>'
@@ -1647,12 +1666,25 @@
     h += '<button class="linkBtn" onclick="closeTplEdit()">とじる</button>';
     document.getElementById('tplEditSheet').innerHTML = h;
     updateTplLyNote();
+    updateTplEstNote();
     ['t_ly', 't_shop', 't_kind'].forEach(function (id) {
       var el = document.getElementById(id);
       if (el) el.addEventListener(id === 't_shop' ? 'input' : 'change', updateTplLyNote);
     });
+    document.getElementById('t_shop').addEventListener('input', updateTplEstNote);
     document.getElementById('tplEditOverlay').className = 'overlay show';
     document.getElementById('tplEditSheet').style.display = 'block';
+  }
+  /** 「仮の金額」にすると、明細にどう出るのかをその場で見せる */
+  function updateTplEstNote() {
+    var note = document.getElementById('t_estNote');
+    if (!note) return;
+    var on = document.getElementById('t_est').checked;
+    var shop = stripTentative(document.getElementById('t_shop').value) || '（内容が空です）';
+    note.innerHTML = on
+      ? '明細に「<b>' + esc(shop + TPL_TENTATIVE) + '</b>」と出ます。'
+        + '照合で「明細に合わせる」を押すと、金額が直って<b>（仮）も自動で取れます</b>。'
+      : '毎月かならず同じ金額のもの（こづかい・サブスクなど）は、オフのままで大丈夫です。';
   }
   /** 「去年の同じ月」で、実際にいくらになるのかをその場で見せる */
   function updateTplLyNote() {
@@ -1708,6 +1740,7 @@
       day: Number(document.getElementById('t_day').value) || 1,
       freq: document.getElementById('t_freq').value,
       use_last_year: document.getElementById('t_ly').checked,
+      is_estimate: document.getElementById('t_est').checked,
       enabled: document.getElementById('t_on').checked
     };
     var btn = document.getElementById('tplSaveBtn');
@@ -2160,15 +2193,19 @@
     if (!p) return;
     var btn = document.getElementById('rcFixBtn' + i);
     if (btn) { btn.disabled = true; btn.textContent = '直しています…'; }
+    // 金額が実額になったので、「（仮）」の印も一緒に外します
+    var patch = { date: p.bill.date, amount: p.bill.amount };
+    var clean = stripTentative(p.entry.shop);
+    if (clean && clean !== String(p.entry.shop || '').trim()) patch.shop = clean;
     var res = await sb.from('entries')
-      .update({ date: p.bill.date, amount: p.bill.amount })
+      .update(patch)
       .eq('id', p.entry.id);
     if (res.error) {
       if (btn) { btn.disabled = false; btn.textContent = '明細に合わせる'; }
       alert('直せませんでした：' + res.error.message);
       return;
     }
-    toast(p.entry.shop + ' を ' + yen(p.bill.amount) + ' に直しました🌸');   // toast は textContent なので esc しない
+    toast(stripTentative(p.entry.shop) + ' を ' + yen(p.bill.amount) + ' に直しました🌸');   // toast は textContent なので esc しない
     await refresh();
     runRecon();                       // 直したぶんは次から「一致」になります
   }
