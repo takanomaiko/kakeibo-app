@@ -1374,6 +1374,39 @@
     var d = Math.min(Math.max(Number(t.day) || 1, 1), last);
     return ym + '-' + ('0' + d).slice(-2);
   }
+  /* ---- テンプレの金額を決める ----
+     ふつうは登録した金額をそのまま使います。
+     ただし「去年の同じ月と同じ金額にする」をオンにすると、
+     1年前の同じ月に入っている“同じ内容”の記録をさがして、その金額を使います。
+
+     ▼ なぜ必要？
+       電気代は 1月50,859円 ／ 6月17,227円 と3倍も動きます。
+       ひとつの金額では、冬は2万円少なく・夏は1万円多く見えてしまいます。
+       これをオンにしておくと、テンプレが**ひとりでに季節に追いつきます**。
+       しかも来年は今年の実績を見るので、毎年あたらしくなります。
+
+     ▼ 見つからないときは、登録した金額をそのまま使います（安全側）
+       ※さがすときは「内容」の名前で照合します。去年と名前がちがうと見つかりません。 */
+  function tplLastYearAmount(t, ym) {
+    var prefix = (Number(ym.slice(0, 4)) - 1) + '-' + ym.slice(5, 7);   // 1年前の同じ月
+    var want = String(t.shop || '').trim();
+    var sum = 0, found = false;
+    (state.entries || []).forEach(function (e) {
+      if (String(e.date).slice(0, 7) !== prefix) return;
+      if (String(e.shop || '').trim() !== want) return;
+      if ((e.kind || 'variable') !== (t.kind || 'fixed')) return;
+      sum += Math.round(Number(e.amount) || 0);
+      found = true;
+    });
+    return found ? sum : null;
+  }
+  function tplAmount(t, ym) {
+    var base = Math.round(Number(t.amount) || 0);
+    if (!t.use_last_year) return base;
+    var last = tplLastYearAmount(t, ym);
+    return last === null ? base : last;
+  }
+
   /** 今月ぶんがまだ入っていないテンプレ（＝これから入れる候補）
    *  ★月のはじめに、その月に出ていくものをまとめて先に入れられるようにしています。
    *    （以前は「その日が来るまで出さない」ようにしていましたが、
@@ -1409,7 +1442,7 @@
     var ym = realYM();
     var list = state.uid ? pendingTpl(ym) : [];
     if (list.length && tplDismissed !== ym) {
-      var sum = list.reduce(function (s, t) { return s + (Number(t.amount) || 0); }, 0);
+      var sum = list.reduce(function (s, t) { return s + tplAmount(t, ym); }, 0);
       h += '<div class="tplBox">'
         + '<div class="tplMsg">🔁 <b>' + Number(ym.slice(5, 7)) + '月の毎月テンプレ</b>が' + list.length + '件（' + yen(sum) + '）まだ入っていません</div>'
         + '<div class="tplBtns">'
@@ -1444,8 +1477,15 @@
     list.forEach(function (t) {
       var isInc = (t.kind === 'income');
       var d = tplDate(t, ym);
+      var amt = tplAmount(t, ym);
+      // 去年の同じ月の金額を使えたときは、その旨を出す（見てから決められるように）
+      var ly = t.use_last_year
+        ? (tplLastYearAmount(t, ym) === null
+            ? '<br><span style="color:var(--muted2)">去年の記録が見つからないので、登録した金額です</span>'
+            : '<br><span style="color:var(--accent)">📅 去年の' + Number(ym.slice(5, 7)) + '月と同じ金額</span>')
+        : '';
       h += '<label class="catrow">'
-        + '<input type="checkbox" class="tplChk" data-id="' + esc(t.id) + '" data-amount="' + (Number(t.amount) || 0) + '"'
+        + '<input type="checkbox" class="tplChk" data-id="' + esc(t.id) + '" data-amount="' + amt + '"'
         + ' checked onchange="updateTplConfirmSum()" style="width:22px;height:22px;flex:none">'
         + '<span class="cemoji">' + (isInc ? '💰' : '🔁') + '</span>'
         + '<span class="cname">' + esc(t.shop || '（無題）')
@@ -1453,8 +1493,9 @@
         + esc(isInc ? '収入' : kindDef(t.kind).label)
         + (isInc ? '' : '・' + esc(t.category || '未分類'))
         + (isInc || !t.pay ? '' : '・' + esc(t.pay))
+        + ly
         + '</div></span>'
-        + '<span class="setname">' + yen(t.amount || 0) + '</span>'
+        + '<span class="setname">' + yen(amt) + '</span>'
         + '</label>';
     });
     h += '</div>';
@@ -1505,7 +1546,7 @@
       return {
         user_id: state.uid,
         date: tplDate(t, ym),
-        amount: Math.round(Number(t.amount) || 0),
+        amount: tplAmount(t, ym),
         shop: t.shop || '（無題）',
         category: isInc ? '収入' : (t.category || '未分類'),
         pay: isInc ? '' : (t.pay || ''),
@@ -1544,7 +1585,8 @@
           + '<span class="cname">' + esc(t.shop || '（無題）')
           + '<div class="csub">' + esc(kdLabel) + '・' + freqLabel(t.freq, true)
           + (t.day ? (Number(t.day) === 31 ? ' 月末' : ' ' + t.day + '日') : '')
-          + (t.enabled === false ? '・おやすみ中' : '') + '</div></span>'
+          + (t.enabled === false ? '・おやすみ中' : '')
+          + (t.use_last_year ? '<br>📅 去年の同じ月と同じ金額にする' : '') + '</div></span>'
           + '<span class="setname">' + yen(t.amount || 0) + '</span>'
           + '<span class="chev">❯</span></div>';
       });
@@ -1594,6 +1636,9 @@
       + '<div class="field"><label>毎月何日</label><select id="t_day">' + dayOpts + '</select></div>'
       + '</div>'
       + '<div class="field"><label>くりかえし</label><select id="t_freq">' + freqOpts + '</select></div>'
+      + '<div class="setrow"><span class="setname">📅 去年の同じ月と同じ金額にする</span>'
+      + '<input type="checkbox" id="t_ly" style="width:22px;height:22px"' + (t.use_last_year ? ' checked' : '') + '></div>'
+      + '<div class="setnote" style="margin:2px 0 12px" id="t_lyNote"></div>'
       + '<div class="field" id="t_payWrap" style="display:' + (isInc ? 'none' : 'block') + '"><label>支払・カード</label><select id="t_pay">' + payOpts + '</select></div>'
       + '<div class="setrow"><span class="setname">このテンプレを使う</span>'
       + '<input type="checkbox" id="t_on" style="width:22px;height:22px"' + (t.enabled === false ? '' : ' checked') + '></div>'
@@ -1601,8 +1646,40 @@
     if (id) h += '<button class="linkBtn" onclick="delTpl()">✕ このテンプレを削除</button>';
     h += '<button class="linkBtn" onclick="closeTplEdit()">とじる</button>';
     document.getElementById('tplEditSheet').innerHTML = h;
+    updateTplLyNote();
+    ['t_ly', 't_shop', 't_kind'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.addEventListener(id === 't_shop' ? 'input' : 'change', updateTplLyNote);
+    });
     document.getElementById('tplEditOverlay').className = 'overlay show';
     document.getElementById('tplEditSheet').style.display = 'block';
+  }
+  /** 「去年の同じ月」で、実際にいくらになるのかをその場で見せる */
+  function updateTplLyNote() {
+    var note = document.getElementById('t_lyNote');
+    if (!note) return;
+    var on = document.getElementById('t_ly').checked;
+    if (!on) {
+      note.innerHTML = '電気代のように<b>季節で金額が大きく変わるもの</b>に使ってください。'
+        + '毎月ほぼ同じ額のものは、オフのままで大丈夫です。';
+      return;
+    }
+    var t = {
+      shop: document.getElementById('t_shop').value.trim(),
+      kind: document.getElementById('t_kind').value,
+      use_last_year: true, amount: 0
+    };
+    var ym = realYM(), lines = [];
+    for (var i = 0; i < 3; i++) {                      // 今月から3ヶ月ぶん、ためしに出してみる
+      var yy = Number(ym.slice(0, 4)), mm = Number(ym.slice(5, 7)) + i;
+      var y2 = yy + Math.floor((mm - 1) / 12), m2 = ((mm - 1) % 12) + 1;
+      var key = y2 + '-' + ('0' + m2).slice(-2);
+      var v = tplLastYearAmount(t, key);
+      lines.push(m2 + '月＝' + (v === null ? '見つからない' : yen(v)));
+    }
+    note.innerHTML = '去年の同じ月の「<b>' + esc(t.shop || '（内容が空です）') + '</b>」をさがして、その金額を使います。<br>'
+      + lines.join('　／　')
+      + '<br><span style="opacity:.8">※見つからない月は、上で入れた金額をそのまま使います</span>';
   }
   function onTplKindChange() {
     var k = document.getElementById('t_kind').value;
@@ -1630,6 +1707,7 @@
       pay: isInc ? '' : document.getElementById('t_pay').value,
       day: Number(document.getElementById('t_day').value) || 1,
       freq: document.getElementById('t_freq').value,
+      use_last_year: document.getElementById('t_ly').checked,
       enabled: document.getElementById('t_on').checked
     };
     var btn = document.getElementById('tplSaveBtn');
