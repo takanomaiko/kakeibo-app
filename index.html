@@ -1177,7 +1177,7 @@
     h += '</div><div class="settotal" id="setTotal"></div>';
     h += '<button class="primaryBtn" id="setSaveBtn" onclick="saveSettings()">保存する</button>';
     h += '<button class="linkBtn" onclick="openYear()">📊 年間まとめ（収入と支出）</button>';
-    h += '<button class="linkBtn" onclick="openReport()">📄 ' + reportYM().slice(0, 4) + '年' + Number(reportYM().slice(5, 7)) + '月のふりかえりレポート（A4）</button>';
+    h += '<button class="linkBtn" onclick="openReport()">📄 ' + reportYM().slice(0, 4) + '年' + Number(reportYM().slice(5, 7)) + '月のふりかえりレポート</button>';
     if (GAS_FETCH_URL) {
       h += '<button class="linkBtn" onclick="requestReview(reportYM())">🤖 ' + Number(reportYM().slice(5, 7)) + '月のひとことをAIに'
         + (latestReview(reportYM()) ? '書き直してもらう' : '書いてもらう') + '</button>';
@@ -2656,13 +2656,14 @@
   }
 
   /* ============================================================
-     📄 月のふりかえりレポート（A4一枚）
+     📄 月のふりかえりレポート
      ⚙️設定 →「📄 ◯月のふりかえりレポート」で、いま見ている月のレポートを別のタブに開きます。
-     ⌘P（iPhoneは 共有→プリント）で PDF にすると、Obsidian に置けます。
+     ★スマホで読みやすいことを最優先にしています（A4印刷にはこだわらない。2026-09-11 に方針変更）。
+       いちばん下の［🖨 印刷・PDFにする］で PDF にもできます。
 
      ▼ しくみは2段
        buildReport(ym) … 数字をぜんぶ計算する（ここでは言葉を作らない）
-       reportHtml(R)   … その数字を A4 のデザインにはめこむ
+       reportHtml(R)   … その数字をレポートのデザインにはめこむ（スマホで読みやすい1列）
      ★ あとで「AIのひとこと」を足すときも、AIに渡すのは buildReport の結果だけにします。
        計算はプログラム、言葉はAI（AIは算数をまちがえるので、数字は作らせない）。
 
@@ -2788,7 +2789,6 @@
     var own = spends.filter(function (e) { return !e.tpl_key; });
     var memoN = own.filter(function (e) { return isRealMemo(e.memo); }).length;
     var eat = spends.filter(function (e) { return e.category === '外食'; });
-    var nat = spends.filter(function (e) { return /那月/.test(String(e.memo || '') + ' ' + String(e.shop || '')); });
     var unc = spends.filter(function (e) { return !e.category || e.category === '未分類'; });
     var gek = spends.filter(function (e) { return e.category === '激ヤバ'; });
 
@@ -2821,7 +2821,6 @@
       star: cats.filter(function (c) { return c.total > 0; })[0] || null,
       kpi: {
         eatOut: { count: eat.length, total: sumAmt(eat) },
-        natsuki: { count: nat.length, total: sumAmt(nat) },
         memo: { count: memoN, of: own.length, pct: own.length ? Math.round(memoN / own.length * 100) : 0 },
         uncategorized: unc.length,
         gekiyaba: { count: gek.length, total: sumAmt(gek) }
@@ -2842,7 +2841,7 @@
     return R.coverage.inProgress ? w + '（途中経過）' : w;
   }
 
-  /** 数字を A4 のデザインにはめこんで、ひとつのHTMLにする */
+  /** 数字をレポートのデザインにはめこんで、ひとつのHTMLにする（スマホで読みやすいのを最優先） */
   function reportHtml(R) {
     function n(v) { return Math.round(v).toLocaleString(); }
     function signed(v) { return (v < 0 ? '−' : '＋') + n(Math.abs(v)); }
@@ -2856,41 +2855,54 @@
       if (!j || !j.has) return '';
       return j.diff >= 0 ? 'のこり ' + n(j.diff) + '円' : n(-j.diff) + '円 オーバー';
     }
+    function cell(k, v, note, cls) {
+      return '<div' + (cls ? ' class="' + cls + '"' : '') + '><div class="k">' + k + '</div><div class="v">' + v + '</div><div class="n">' + note + '</div></div>';
+    }
+    // 費目1つぶんの行（予算がある費目は、予算の線つきのバー）
+    function budRow(c) {
+      var j = c.judge || { has: false };
+      var name = '<div class="cn">' + esc((c.emoji ? c.emoji + ' ' : '') + c.name) + '</div>';
+      if (!j.has) {
+        return '<div class="bud nob">' + name + '<div class="track"></div>'
+          + '<div class="cv">' + n(c.total) + '<small>予算なし</small></div><div class="st none">—</div></div>';
+      }
+      var over = j.ratio === null ? true : j.ratio > 1;
+      var w = j.ratio === null ? 100 : Math.min(j.ratio, 1.5) / 1.5 * 100;
+      return '<div class="bud">' + name
+        + '<div class="track"><div class="fill" style="width:' + w.toFixed(1) + '%;background:' + (over ? 'var(--danger)' : c.color) + '"></div><div class="line"></div></div>'
+        + '<div class="cv">' + n(c.total) + '<small>/' + n(j.budget) + '</small></div>'
+        + '<div class="st' + (over ? ' bad' : '') + '">' + j.stars + '</div></div>';
+    }
+
     var t = R.year + '年' + R.month + '月';
-    var bal = R.balance;
+    var bal = R.balance, b = R.budget, s = R.star, kp = R.kpi;
     var h = '<!doctype html><html lang="ja"><head><meta charset="utf-8">'
       + '<meta name="viewport" content="width=device-width,initial-scale=1">'
       + '<title>敵との戦績 ' + t + '</title>'
       + '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=Zen+Kaku+Gothic+New:wght@400;500;700;900&display=swap">'
-      + '<style>' + REPORT_CSS + '</style></head><body>';
-    h += '<div class="bar noprint"><button onclick="print()">🖨 印刷・PDFにする</button><span>⌘P（iPhoneは 共有→プリント）でもOK</span></div>';
-    h += '<div class="sheet">';
+      + '<style>' + REPORT_CSS + '</style></head><body><div class="sheet">';
 
     // ── みだし
-    h += '<header><div class="ttl"><small>かんたん家計簿 ふりかえり</small>' + t + 'の戦績</div>'
-      + '<div class="verdict"><div class="v num' + (bal < 0 ? ' minus' : '') + '">' + signed(bal) + '<span style="font-size:12pt">円</span></div>'
-      + '<div class="c">' + esc(reportVerdict(R)) + '</div></div></header>';
+    h += '<header><div class="sub">かんたん家計簿 ふりかえり</div><h1>' + t + 'の戦績</h1>'
+      + '<div class="verdict num' + (bal < 0 ? ' minus' : '') + '">' + signed(bal) + '<small>円</small></div>'
+      + '<div class="vc">' + esc(reportVerdict(R)) + '</div></header>';
     if (R.coverage.notes.length) h += '<div class="warn">⚠️ ' + esc(R.coverage.notes.join('／')) + '</div>';
 
-    // ── 収支と予算
-    var s = R.star, b = R.budget;
+    // ── 収支と予算（2×2）
     h += '<div class="money">'
-      + '<div><div class="k">入ってきたお金</div><div class="v num">' + n(R.income.total) + '</div>'
-      + '<div class="n">' + (R.income.names.length ? esc(R.income.names.join('・')) : '記録なし') + '</div></div>'
-      + '<div><div class="k">出ていったお金</div><div class="v num">' + n(R.expense.total) + '</div>'
-      + '<div class="n">' + R.expense.count + '件</div></div>'
-      + '<div><div class="k">予算との勝負（' + esc(b.kindsLabel) + '）</div>'
-      + (b.has
-          ? '<div class="v">' + starHtml(b) + '</div><div class="n">予算 ' + n(b.budget) + '円に対して<br><b>' + diffWord(b) + '</b></div>'
-          : '<div class="v" style="color:var(--faint);font-size:11pt">予算なし</div><div class="n">⚙️で予算を入れると勝負できます</div>')
-      + '</div>'
-      + '<div class="hi"><div class="k">今月の主役</div>'
-      + (s ? '<div class="v num plus">' + n(s.total) + '</div><div class="n"><b>' + esc(s.emoji + ' ' + s.name) + '＝支出の' + s.pct + '%</b></div>'
-           : '<div class="v num">0</div><div class="n">まだ支出がありません</div>')
-      + '</div></div>';
+      + cell('入ってきたお金', '<span class="num">' + n(R.income.total) + '</span>',
+          R.income.names.length ? esc(R.income.names.join('・')) : '記録なし')
+      + cell('出ていったお金', '<span class="num">' + n(R.expense.total) + '</span>', R.expense.count + '件')
+      + cell('予算との勝負（' + esc(b.kindsLabel) + '）',
+          b.has ? starHtml(b) : '<span class="faint">予算なし</span>',
+          b.has ? '予算 ' + n(b.budget) + '円に対して<br><b>' + diffWord(b) + '</b>' : '⚙️で予算を入れると勝負できます')
+      + cell('今月の主役',
+          s ? '<span class="num plus">' + n(s.total) + '</span>' : '<span class="num">0</span>',
+          s ? '<b>' + esc(s.emoji + ' ' + s.name) + '＝支出の' + s.pct + '%</b>' : 'まだ支出がありません', 'hi')
+      + '</div>';
 
     // ── 敵との戦い
-    h += '<div class="grid2"><section><h2>敵との戦い <span>タブ別</span></h2>';
+    h += '<section><h2>敵との戦い <span>タブ別</span></h2>';
     R.kinds.forEach(function (k) {
       var sub = k.count ? k.count + '件' + (k.top.length ? '・' + k.top.join('・') : '') : '出番なし';
       var bud;
@@ -2901,7 +2913,7 @@
           ? '今年の予算 ' + n(k.year.budget) + '円のうち ' + k.year.pct + '%（のこり ' + n(k.year.left) + '円）'
           : '年の予算なし' + (k.year.used ? '（今年 ' + n(k.year.used) + '円）' : '');
       }
-      h += '<div class="foe"><div class="chip" style="background:' + k.color + '"></div>'
+      h += '<div class="foe"><span class="chip" style="background:' + k.color + '"></span>'
         + '<div class="nm">' + esc(k.label) + '<i>' + esc(sub) + '</i><em>' + bud + '</em></div>'
         + '<div class="am num"' + (k.total ? '' : ' style="color:var(--faint)"') + '>' + n(k.total) + '</div>'
         + '<div class="pc">' + (k.total ? k.pct + '%' : '—') + '</div></div>';
@@ -2910,120 +2922,135 @@
     var notes = [];
     if (idle.length) notes.push('<b>' + idle.join('と') + 'は出番なし</b>の月でした。');
     if (R.coverage.complete && R.prev.complete) {
-      var dd = R.expense.total - R.prev.total;
-      notes.push('先月（' + Number(R.prev.ym.slice(5, 7)) + '月）より支出は <b>' + signed(dd) + '円</b>。');
+      notes.push('先月（' + Number(R.prev.ym.slice(5, 7)) + '月）より支出は <b>' + signed(R.expense.total - R.prev.total) + '円</b>。');
     }
-    if (notes.length) h += '<div class="note" style="margin-top:2.5mm">' + notes.join('') + '</div>';
+    if (notes.length) h += '<div class="note">' + notes.join('') + '</div>';
     h += '</section>';
 
-    // ── 費目ごとの勝負（予算の線より右にはみ出したら赤）
-    var withB = R.cats.filter(function (c) { return c.judge.has; })
-      .sort(function (a, b2) { return (b2.judge.ratio === null ? 9 : b2.judge.ratio) - (a.judge.ratio === null ? 9 : a.judge.ratio); });
-    var noB = R.cats.filter(function (c) { return !c.judge.has && c.total > 0; });
+    // ── 費目ごとの勝負（タブごとに、費目の並び順どおり全部）
     h += '<section><h2>費目ごとの勝負 <span>｜の線＝予算</span></h2>';
-    if (!withB.length) h += '<div class="note">予算の入った費目がありません。⚙️予算の設定で入れると、ここで勝負できます。</div>';
-    withB.slice(0, 11).forEach(function (c) {
-      var j = c.judge;
-      var over = j.ratio === null ? true : j.ratio > 1;
-      var w = j.ratio === null ? 100 : Math.min(j.ratio, 1.5) / 1.5 * 100;
-      h += '<div class="bud"><div class="cn">' + esc(c.emoji + ' ' + c.name) + '</div>'
-        + '<div class="track"><div class="fill" style="width:' + w.toFixed(1) + '%;background:' + (over ? 'var(--danger)' : c.color) + '"></div><div class="line"></div></div>'
-        + '<div class="cv">' + n(c.total) + '<small>/' + n(j.budget) + '</small></div>'
-        + '<div class="st' + (over ? ' bad' : '') + '">' + j.stars + '</div></div>';
+    reportCatGroups(R).forEach(function (g) {
+      h += '<div class="grp"><span class="chip" style="background:' + g.color + '"></span>' + esc(g.label) + '</div>';
+      g.cats.forEach(function (c) { h += budRow(c); });
     });
-    if (noB.length) {
-      h += '<div class="nob"><b>予算なし</b>　' + noB.slice(0, 6).map(function (c) { return esc(c.name) + ' ' + n(c.total); }).join('・')
-        + (noB.length > 6 ? ' ほか' + (noB.length - 6) + '費目' : '') + '</div>';
-    }
-    h += '</section></div>';
+    h += '</section>';
 
-    // ── 数字4つ
-    var kp = R.kpi;
+    // ── 数字3つ
     h += '<div class="kpi">'
-      + '<div><div class="v num">' + kp.eatOut.count + '<span>回</span></div><div class="k">外食した回数（' + n(kp.eatOut.total) + '円）</div></div>'
-      + '<div><div class="v num">' + n(kp.natsuki.total) + '</div><div class="k">那月ちゃんに（' + kp.natsuki.count + '件）</div></div>'
-      + '<div><div class="v num">' + kp.memo.pct + '<span>%</span></div><div class="k">メモを書いた割合（' + kp.memo.count + '/' + kp.memo.of + '件）</div></div>'
+      + '<div><div class="v num">' + kp.eatOut.count + '<span>回</span></div><div class="k">外食した回数<br>' + n(kp.eatOut.total) + '円</div></div>'
+      + '<div><div class="v num">' + kp.memo.pct + '<span>%</span></div><div class="k">メモを書いた割合<br>' + kp.memo.count + '/' + kp.memo.of + '件</div></div>'
       + '<div><div class="v num' + (kp.uncategorized ? '' : ' plus') + '">' + kp.uncategorized + '<span>件</span></div><div class="k">未分類のまま</div></div>'
       + '</div>';
 
-    // ── メモとひとこと
-    h += '<div class="grid2"><section><h2>メモが残していたこと <span>あなたの言葉から</span></h2>';
+    // ── ひとこと（AI）
+    h += '<section><h2>ひとこと <span>クロコより</span></h2>';
+    var rv = R.review && R.review.body;
+    if (rv && rv.tsukkomi && rv.negirai) {
+      h += aiBoxHtml(rv.tsukkomi, '') + aiBoxHtml(rv.negirai, ' gold') + (rv.advice ? aiBoxHtml(rv.advice, ' advice') : '');
+    } else {
+      h += '<div class="tsukkomi soon"><div class="hd">🤖 まだありません</div>'
+        + '<p>⚙️設定の［🤖 AIにひとことを書いてもらう］を押すと、ここに<b>AIのふりかえり</b>（ツッコミ・ねぎらい・来月の作戦）が入ります。</p></div>';
+    }
+    h += '</section>';
+
+    // ── メモが残していたこと
+    h += '<section><h2>メモが残していたこと <span>あなたの言葉から</span></h2>';
     if (!R.quotes.length) h += '<div class="note">この月は、引用できるメモがありませんでした。</div>';
     R.quotes.forEach(function (q) {
       h += '<div class="quote"><p>' + esc(q.memo) + '</p><cite>' + md(q.date) + ' ' + esc(q.shop) + ' ' + n(q.amount) + '円</cite></div>';
     });
-    h += '</section><section><h2>ひとこと <span>クロコより</span></h2>';
-    var rv = R.review && R.review.body;
-    if (rv && rv.tsukkomi && rv.negirai) {
-      h += aiBoxHtml(rv.tsukkomi, '') + aiBoxHtml(rv.negirai, ' gold');
-    } else {
-      h += '<div class="tsukkomi soon"><div class="hd">🤖 まだありません</div>'
-        + '<p>⚙️設定の［🤖 AIにひとことを書いてもらう］を押すと、ここに<b>AIのふりかえり</b>（ツッコミ＋気づき＋ねぎらい）が入ります。</p></div>';
-    }
-    h += '</section></div>';
+    h += '</section>';
 
     // ── おしまい
-    h += '<footer><div>かんたん家計簿 ／ ' + md(R.coverage.start) + '〜' + md(R.coverage.end) + ' ／ 全' + (R.expense.count + R.income.count) + '件</div>'
-      + '<div>' + (b.has ? '予算との勝負 ' + b.stars + ' ' + b.word : '') + '</div></footer>';
+    h += '<footer>かんたん家計簿 ／ ' + md(R.coverage.start) + '〜' + md(R.coverage.end) + ' ／ 全' + (R.expense.count + R.income.count) + '件'
+      + (b.has ? '<br>予算との勝負 ' + b.stars + ' ' + b.word : '') + '</footer>';
+    h += '<div class="bar noprint"><button onclick="print()">🖨 印刷・PDFにする</button></div>';
     h += '</div></body></html>';
     return h;
   }
 
-  // レポートのデザイン（承認ずみの見本と同じ色・書体）
+  /** 費目ごとの勝負に出す費目を、タブごと・費目の並び順どおりにそろえる
+   *  ・月で見るタブ（敵１・敵２）… 費目をぜんぶ（使っていない費目も）
+   *  ・年で見るタブ（敵３・敵４）… この月に使った費目だけ
+   *  ・費目の一覧に無いもの（未分類など）… そのタブの最後に */
+  function reportCatGroups(R) {
+    var rest = {};
+    R.cats.forEach(function (c) { rest[c.kind + '|' + c.name] = c; });
+    return KINDS.map(function (k) {
+      var list = [];
+      ALL_CATEGORIES.forEach(function (d) {
+        if (d.kind !== k.key) return;
+        var key = k.key + '|' + d.name;
+        if (rest[key]) { list.push(rest[key]); delete rest[key]; return; }
+        if (k.view !== 'month') return;
+        list.push({ name: d.name, kind: k.key, emoji: d.emoji, color: d.color, total: 0, count: 0,
+                    judge: judgeBudget(0, budgetFor(d.name, R.ym), d.name === '激ヤバ') });
+      });
+      Object.keys(rest).forEach(function (key) {
+        if (rest[key].kind === k.key) { list.push(rest[key]); delete rest[key]; }
+      });
+      if (k.view !== 'month') list = list.filter(function (c) { return c.total > 0; });
+      return { label: k.label, color: k.color, cats: list };
+    }).filter(function (g) { return g.cats.length; });
+  }
+
+  // レポートのデザイン（見本と同じ色・書体。スマホで読みやすい大きさ）
   var REPORT_CSS = [
-    ':root{--paper:#fffaf9;--ink:#3a3230;--sub:#7d6f6c;--faint:#b9a9a6;--rule:#efe2e0;--tint:#fdf1f3;--gold:#d4a843;--danger:#ff6b6b;--deep:#d4587d;--backdrop:#efe6e4}',
+    ':root{--paper:#fffaf9;--ink:#3a3230;--sub:#7d6f6c;--faint:#b9a9a6;--rule:#efe2e0;--tint:#fdf1f3;--gold:#d4a843;--danger:#ff6b6b;--deep:#d4587d;--mint:#7fd3b2;--backdrop:#efe6e4}',
     '*{box-sizing:border-box}',
-    'body{margin:0;background:var(--backdrop);font-family:"Zen Kaku Gothic New","Hiragino Sans",system-ui,sans-serif;color:var(--ink);-webkit-font-smoothing:antialiased;display:flex;flex-direction:column;align-items:center;padding:16px 12px 24px}',
-    '.bar{display:flex;align-items:center;gap:12px;margin-bottom:12px;font-size:12px;color:var(--sub)}',
-    '.bar button{border:none;border-radius:12px;padding:10px 18px;font:inherit;font-size:14px;font-weight:700;color:#fff;background:linear-gradient(135deg,#ffb3c6,#ff8fab);cursor:pointer}',
-    '.sheet{width:210mm;min-height:297mm;background:var(--paper);padding:11mm 12mm 9mm;box-shadow:0 6px 34px rgba(0,0,0,.18);display:flex;flex-direction:column;gap:4.5mm}',
+    'body{margin:0;background:var(--backdrop);font-family:"Zen Kaku Gothic New","Hiragino Sans",system-ui,sans-serif;color:var(--ink);-webkit-font-smoothing:antialiased;font-size:15px;line-height:1.6}',
+    '.sheet{max-width:640px;margin:0 auto;background:var(--paper);padding:22px 18px 28px;min-height:100vh}',
+    '@media (min-width:680px){body{padding:24px 0}.sheet{border-radius:18px;box-shadow:0 6px 30px rgba(0,0,0,.12);min-height:0}}',
     '.num{font-family:"Bricolage Grotesque","Zen Kaku Gothic New",sans-serif;font-variant-numeric:tabular-nums;font-weight:800;letter-spacing:-.01em}',
-    'header{display:flex;align-items:flex-end;justify-content:space-between;gap:8mm;border-bottom:2.5px solid var(--ink);padding-bottom:3mm}',
-    '.ttl{font-size:23pt;font-weight:900;line-height:1.1}',
-    '.ttl small{display:block;font-size:8.4pt;font-weight:500;color:var(--sub);letter-spacing:.16em;margin-bottom:1.5mm}',
-    '.verdict{text-align:right;flex:none}.verdict .v{font-size:26pt;line-height:1;color:var(--deep)}.verdict .v.minus{color:var(--danger)}',
-    '.verdict .c{font-size:8.4pt;color:var(--sub);margin-top:1mm}',
-    '.warn{font-size:8.4pt;color:#a07a2a;background:#fff6dc;border:1.2px solid #f3dfa5;border-radius:2mm;padding:1.6mm 3mm;margin-top:-2mm}',
-    '.money{display:grid;grid-template-columns:1fr 1fr 1.15fr 1.2fr;border:1.6px solid var(--rule);border-radius:3mm;overflow:hidden}',
-    '.money>div{padding:3.2mm 3.6mm;border-right:1.6px solid var(--rule)}.money>div:last-child{border-right:0}.money .hi{background:var(--tint)}',
-    '.money .k{font-size:8pt;color:var(--sub);font-weight:700}.money .v{font-size:15pt;margin-top:.8mm}',
-    '.money .n{font-size:7.4pt;color:var(--faint);margin-top:.6mm;line-height:1.45}.money .n b{color:var(--sub)}',
-    '.plus{color:var(--deep)}',
-    '.stars{font-size:10.5pt;font-weight:900;color:#a8801f;letter-spacing:.02em;white-space:nowrap}.stars.bad{color:var(--danger)}',
-    '.grid2{display:grid;grid-template-columns:1.05fr 1fr;gap:6mm;align-items:start}',
-    'h2{font-size:9.6pt;font-weight:900;margin:0 0 2.2mm;padding-bottom:1.2mm;border-bottom:1.4px solid var(--rule);display:flex;justify-content:space-between;align-items:baseline}',
-    'h2 span{font-size:7.4pt;color:var(--faint);font-weight:500;letter-spacing:.06em}',
-    '.foe{display:flex;align-items:center;gap:2.5mm;padding:1.6mm 0;border-bottom:1px dotted var(--rule)}.foe:last-of-type{border-bottom:0}',
-    '.chip{width:5.5mm;height:5.5mm;border-radius:1.6mm;flex:none}',
-    '.foe .nm{flex:1;min-width:0;font-size:9pt;font-weight:700}',
-    '.foe .nm i{display:block;font-style:normal;font-size:7.2pt;color:var(--faint);font-weight:500}',
-    '.foe .nm em{display:block;font-style:normal;font-size:7.4pt;color:var(--sub);font-weight:500;margin-top:.4mm}.foe .nm em .stars{font-size:8pt}',
-    '.foe .am{font-size:11.5pt}.foe .pc{width:11mm;text-align:right;font-size:8pt;color:var(--sub);font-family:"Bricolage Grotesque",sans-serif}',
-    '.bud{display:flex;align-items:center;gap:1.8mm;margin-bottom:1.5mm}',
-    '.bud .cn{width:24mm;font-size:7.8pt;font-weight:500;flex:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
-    '.bud .track{position:relative;flex:1;height:4mm;background:#f6ecea;border-radius:2mm;overflow:hidden}',
-    '.bud .fill{height:100%;border-radius:2mm}',
-    '.bud .line{position:absolute;top:-.5mm;bottom:-.5mm;left:66.67%;width:.6mm;background:var(--ink);opacity:.55}',
-    '.bud .cv{width:23mm;text-align:right;font-size:8pt;font-family:"Bricolage Grotesque",sans-serif;font-variant-numeric:tabular-nums;font-weight:600}',
-    '.bud .cv small{color:var(--faint);font-weight:400}',
-    '.bud .st{width:10mm;text-align:right;font-size:7.4pt;color:#a8801f;font-weight:900;letter-spacing:-.04em}.bud .st.bad{color:var(--danger)}',
-    '.nob{font-size:7.4pt;color:var(--sub);margin-top:2mm;line-height:1.55}.nob b{color:var(--faint)}',
-    '.note{background:var(--tint);border-radius:3mm;padding:2.8mm 3.6mm;font-size:8.4pt;line-height:1.65}.note b{color:var(--deep)}',
-    '.kpi{display:grid;grid-template-columns:repeat(4,1fr);gap:2.5mm}',
-    '.kpi>div{border:1.4px solid var(--rule);border-radius:2.5mm;padding:2.6mm 2mm;text-align:center}',
-    '.kpi .v{font-size:13pt;line-height:1.1}.kpi .v span{font-size:8pt}.kpi .k{font-size:7pt;color:var(--sub);margin-top:1mm;font-weight:700}',
-    '.quote{border-left:2.5px solid #ff8fab;padding:0 0 0 3mm;margin:0 0 3mm}.quote:last-child{margin-bottom:0}',
-    '.quote p{margin:0;font-size:8.6pt;line-height:1.6}.quote cite{display:block;font-style:normal;font-size:7.2pt;color:var(--faint);margin-top:.8mm}',
-    '.tsukkomi{border:2px solid #ff8fab;border-radius:3mm;padding:3.4mm 4mm;background:#fff}',
-    '.tsukkomi .hd{font-size:8.6pt;font-weight:900;color:var(--deep);margin-bottom:1.6mm}',
-    '.tsukkomi p{margin:0 0 1.8mm;font-size:8.6pt;line-height:1.66}.tsukkomi p:last-child{margin-bottom:0}',
+    'header{border-bottom:2.5px solid var(--ink);padding-bottom:12px;margin-bottom:14px}',
+    'header .sub{font-size:12px;color:var(--sub);letter-spacing:.14em}',
+    'h1{font-size:26px;font-weight:900;margin:2px 0 6px;line-height:1.25}',
+    '.verdict{font-size:34px;line-height:1.1;color:var(--deep)}.verdict.minus{color:var(--danger)}.verdict small{font-size:16px;margin-left:2px}',
+    '.vc{font-size:13px;color:var(--sub);margin-top:2px}',
+    '.warn{font-size:13px;color:#a07a2a;background:#fff6dc;border:1.5px solid #f3dfa5;border-radius:10px;padding:8px 12px;margin-bottom:14px}',
+    '.money{display:grid;grid-template-columns:1fr 1fr;border:1.5px solid var(--rule);border-radius:14px;overflow:hidden;margin-bottom:24px}',
+    '.money>div{padding:12px 14px;border-right:1.5px solid var(--rule);border-bottom:1.5px solid var(--rule)}',
+    '.money>div:nth-child(2n){border-right:0}.money>div:nth-child(n+3){border-bottom:0}.money .hi{background:var(--tint)}',
+    '.money .k{font-size:12px;color:var(--sub);font-weight:700}.money .v{font-size:22px;margin-top:2px}',
+    '.money .n{font-size:12px;color:var(--faint);margin-top:2px;line-height:1.5}.money .n b{color:var(--sub)}',
+    '.faint{color:var(--faint)}.plus{color:var(--deep)}',
+    'section{margin-bottom:26px}',
+    'h2{font-size:16px;font-weight:900;margin:0 0 10px;padding-bottom:6px;border-bottom:1.5px solid var(--rule);display:flex;justify-content:space-between;align-items:baseline}',
+    'h2 span{font-size:12px;color:var(--faint);font-weight:500}',
+    '.stars{font-size:15px;font-weight:900;color:#a8801f;white-space:nowrap}.stars.bad{color:var(--danger)}',
+    '.chip{display:inline-block;width:18px;height:18px;border-radius:6px;flex:none}',
+    '.foe{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px dotted var(--rule)}.foe:last-of-type{border-bottom:0}',
+    '.foe .nm{flex:1;min-width:0;font-size:15px;font-weight:700}',
+    '.foe .nm i{display:block;font-style:normal;font-size:12px;color:var(--faint);font-weight:500}',
+    '.foe .nm em{display:block;font-style:normal;font-size:12.5px;color:var(--sub);font-weight:500;margin-top:2px}.foe .nm em .stars{font-size:13px}',
+    '.foe .am{font-size:18px;text-align:right}.foe .pc{width:38px;text-align:right;font-size:12px;color:var(--sub)}',
+    '.note{background:var(--tint);border-radius:12px;padding:10px 14px;font-size:13.5px;line-height:1.7;margin-top:10px}.note b{color:var(--deep)}',
+    '.grp{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:700;color:var(--sub);margin:16px 0 8px}.grp:first-of-type{margin-top:4px}',
+    '.grp .chip{width:12px;height:12px;border-radius:4px}',
+    '.bud{display:grid;grid-template-columns:7.2em 1fr auto 3em;align-items:center;gap:8px;margin-bottom:10px}',
+    '.bud .cn{font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+    '.bud .track{position:relative;height:12px;background:#f6ecea;border-radius:6px;overflow:hidden}',
+    '.bud .fill{height:100%;border-radius:6px}',
+    '.bud .line{position:absolute;top:0;bottom:0;left:66.67%;width:2px;background:var(--ink);opacity:.55}',
+    '.bud .cv{font-size:13px;text-align:right;font-family:"Bricolage Grotesque",sans-serif;font-variant-numeric:tabular-nums;font-weight:600;white-space:nowrap;line-height:1.25}',
+    '.bud .cv small{display:block;color:var(--faint);font-weight:400;font-size:11px}',
+    '.bud .st{font-size:11.5px;text-align:right;color:#a8801f;font-weight:900;letter-spacing:-.04em}.bud .st.bad{color:var(--danger)}.bud .st.none{color:var(--faint);font-weight:500}',
+    '.bud.nob .track{height:0;border-top:1px dashed var(--rule);background:transparent;border-radius:0}',
+    '.kpi{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:26px}',
+    '.kpi>div{border:1.5px solid var(--rule);border-radius:12px;padding:10px 6px;text-align:center}',
+    '.kpi .v{font-size:22px;line-height:1.2}.kpi .v span{font-size:12px}.kpi .k{font-size:11.5px;color:var(--sub);margin-top:3px;font-weight:700;line-height:1.45}',
+    '.tsukkomi{border:2px solid #ff8fab;border-radius:14px;padding:14px 16px;background:#fff;margin-bottom:12px}',
+    '.tsukkomi .hd{font-size:15px;font-weight:900;color:var(--deep);margin-bottom:8px}',
+    '.tsukkomi p{margin:0 0 10px;font-size:15px;line-height:1.85}.tsukkomi p:last-child{margin-bottom:0}',
+    '.tsukkomi.gold{border-color:var(--gold)}.tsukkomi.gold .hd{color:#a8801f}',
+    '.tsukkomi.advice{border-color:var(--mint);background:#f3fbf7}.tsukkomi.advice .hd{color:#2f8f6f}',
     '.tsukkomi.soon{border-style:dashed;border-color:var(--rule);background:transparent}.tsukkomi.soon .hd{color:var(--faint)}',
-    '.tsukkomi.gold{border-color:var(--gold);margin-top:3mm}.tsukkomi.gold .hd{color:#a8801f}',
-    'footer{margin-top:auto;border-top:1.4px solid var(--rule);padding-top:2.5mm;display:flex;justify-content:space-between;align-items:center;font-size:7.4pt;color:var(--faint)}',
-    '@media print{@page{size:A4;margin:0}body{background:#fff;padding:0;display:block}.noprint{display:none}.sheet{box-shadow:none;width:auto;min-height:auto}}',
-    '@media (max-width:230mm){body{padding:10px 6px}.sheet{width:100%;padding:7mm 6mm}.money{grid-template-columns:1fr 1fr}.grid2{grid-template-columns:1fr}.kpi{grid-template-columns:1fr 1fr}',
-    '  header{flex-direction:column;align-items:flex-start;gap:2mm}.ttl{font-size:19pt}.verdict{text-align:left}.verdict .v{font-size:22pt}',
-    '  .bar{flex-direction:column;gap:6px;text-align:center}}'
+    '.quote{border-left:3px solid #ff8fab;padding:0 0 0 12px;margin:0 0 14px}.quote:last-child{margin-bottom:0}',
+    '.quote p{margin:0;font-size:14.5px;line-height:1.7}.quote cite{display:block;font-style:normal;font-size:12px;color:var(--faint);margin-top:3px}',
+    'footer{border-top:1.5px solid var(--rule);padding-top:10px;font-size:12px;color:var(--faint);line-height:1.6}',
+    '.bar{text-align:center;margin-top:18px}',
+    '.bar button{border:1.5px solid var(--rule);background:#fff;border-radius:12px;padding:10px 18px;font:inherit;font-size:13px;color:var(--sub);cursor:pointer}',
+    '@media print{body{background:#fff}.sheet{max-width:none;min-height:0;box-shadow:none}.noprint{display:none}.foe,.bud,.quote,.tsukkomi,.money,.kpi{break-inside:avoid}}'
   ].join('\n');
 
   /** ［📄 ふりかえりレポート］別のタブに開く（印刷・PDF保存がしやすいように） */
