@@ -1174,6 +1174,7 @@
     h += '</div><div class="settotal" id="setTotal"></div>';
     h += '<button class="primaryBtn" id="setSaveBtn" onclick="saveSettings()">保存する</button>';
     h += '<button class="linkBtn" onclick="openYear()">📊 年間まとめ（収入と支出）</button>';
+    h += '<button class="linkBtn" onclick="openReport()">📄 ' + reportYM().slice(0, 4) + '年' + Number(reportYM().slice(5, 7)) + '月のふりかえりレポート（A4）</button>';
     h += '<button class="linkBtn" onclick="openCatManager()">🏷 費目を編集（追加・名前・色）</button>';
     h += '<button class="linkBtn" onclick="openTplManager()">🔁 毎月のテンプレ（きまった出費・収入）</button>';
     h += '<button class="linkBtn" onclick="openImport()">📥 データをまとめて取り込み</button>';
@@ -2645,6 +2646,382 @@
       s += '<text x="' + (x + bw / 2).toFixed(1) + '" y="' + (H - 6) + '" text-anchor="middle" font-size="9" style="fill:var(--muted2)">' + (i + 1) + '</text>';
     });
     return s + '</svg>';
+  }
+
+  /* ============================================================
+     📄 月のふりかえりレポート（A4一枚）
+     ⚙️設定 →「📄 ◯月のふりかえりレポート」で、いま見ている月のレポートを別のタブに開きます。
+     ⌘P（iPhoneは 共有→プリント）で PDF にすると、Obsidian に置けます。
+
+     ▼ しくみは2段
+       buildReport(ym) … 数字をぜんぶ計算する（ここでは言葉を作らない）
+       reportHtml(R)   … その数字を A4 のデザインにはめこむ
+     ★ あとで「AIのひとこと」を足すときも、AIに渡すのは buildReport の結果だけにします。
+       計算はプログラム、言葉はAI（AIは算数をまちがえるので、数字は作らせない）。
+
+     ▼ 予算との勝負（⚙️予算の値を使います）
+       予算に対して 90%以下＝★★★圧勝／100%以下＝★★☆勝ち／120%以下＝★☆☆負け／それ以上＝☆☆☆完敗
+       ・激ヤバは「0円が目標」なので、使っていなければ ★★★、1円でも使えば負け
+       ・予算を入れていない費目（塾など）は勝ち負けをつけず「予算なし」
+       ・敵３・敵４は年の予算なので「今年の予算のうち、この月までに何%使ったか」
+     ============================================================ */
+  // 引用するメモを選ぶときに、点数を足すことば（ふりかえりや来年への申し送りが入りやすい）
+  var REPORT_QUOTE_WORDS = ['失敗', '削れ', '買いすぎ', '来年', 'もう', 'つらい', 'よかった', 'おいしかった', '疲れ', 'やっぱり', '反省', '必要'];
+
+  // レポートにする月（年タブを見ているときは今月）
+  function reportYM() { return isYearView() ? realYM() : ymStr(); }
+  function daysIn(ym) { return new Date(Number(ym.slice(0, 4)), Number(ym.slice(5, 7)), 0).getDate(); }
+  function isRealMemo(m) { m = String(m == null ? '' : m).trim(); return !!m && m !== '毎月テンプレ'; }
+  function sumAmt(arr) { return arr.reduce(function (s, e) { return s + Math.round(Number(e.amount) || 0); }, 0); }
+  function catDefIn(name, kindName) {
+    for (var i = 0; i < ALL_CATEGORIES.length; i++) {
+      if (ALL_CATEGORIES[i].name === name && ALL_CATEGORIES[i].kind === kindName) return ALL_CATEGORIES[i];
+    }
+    return catDef(name);
+  }
+
+  /** 予算との勝負の判定。zeroIsGoal＝予算0円が目標の費目（激ヤバ） */
+  function judgeBudget(spent, budget, zeroIsGoal) {
+    spent = Math.round(spent || 0); budget = Math.round(Number(budget) || 0);
+    if (budget <= 0) {
+      if (!zeroIsGoal) return { has: false, spent: spent };
+      return spent > 0
+        ? { has: true, budget: 0, spent: spent, diff: -spent, ratio: null, stars: '☆☆☆', word: '負け' }
+        : { has: true, budget: 0, spent: 0, diff: 0, ratio: 0, stars: '★★★', word: '0円！' };
+    }
+    var r = spent / budget, s, w;
+    if (r <= 0.9) { s = '★★★'; w = '圧勝'; }
+    else if (r <= 1) { s = '★★☆'; w = '勝ち'; }
+    else if (r <= 1.2) { s = '★☆☆'; w = '負け'; }
+    else { s = '☆☆☆'; w = '完敗'; }
+    return { has: true, budget: budget, spent: spent, diff: budget - spent, ratio: r, stars: s, word: w };
+  }
+
+  /** その月の数字をぜんぶ計算する（言葉は作りません） */
+  function buildReport(ym) {
+    var all = state.entries || [];
+    var nowYM = realYM(), today = todayStr();
+    var inMonth = all.filter(function (e) { return String(e.date).slice(0, 7) === ym; });
+    var incomes = inMonth.filter(function (e) { return kindOf(e) === 'income'; });
+    var spends = inMonth.filter(function (e) { return kindOf(e) !== 'income'; });
+    var expTotal = sumAmt(spends), incTotal = sumAmt(incomes);
+
+    // ▼ 期間がそろっているか（半月ぶんと1ヶ月ぶんを比べて「4.8倍！」と言わないための印）
+    var firstSpend = all.reduce(function (m, e) {
+      return (kindOf(e) !== 'income' && (!m || String(e.date) < m)) ? String(e.date) : m;
+    }, '');
+    var start = ym + '-01';
+    var cov = { start: start, end: ym + '-' + ('0' + daysIn(ym)).slice(-2), partial: false, inProgress: false, future: false, notes: [] };
+    if (firstSpend && firstSpend > start && firstSpend.slice(0, 7) === ym) {
+      cov.partial = true; cov.start = firstSpend;
+      cov.notes.push(Number(firstSpend.slice(5, 7)) + '/' + Number(firstSpend.slice(8, 10)) + 'からの記録です（家計簿を始めた月）');
+    }
+    if (ym === nowYM) {
+      cov.inProgress = true; cov.end = today;
+      cov.notes.push(Number(today.slice(5, 7)) + '/' + Number(today.slice(8, 10)) + '時点の途中経過です');
+    }
+    if (ym > nowYM) { cov.future = true; cov.notes.push('まだ来ていない月です'); }
+    cov.complete = !!firstSpend && firstSpend <= start && !cov.inProgress && !cov.future;
+
+    // ▼ 費目ごと（予算がある費目は、使っていなくても勝負に出す）
+    var catMap = {};
+    spends.forEach(function (e) {
+      var k = kindOf(e), name = e.category || '未分類', key = k + '|' + name;
+      var c = catMap[key] = catMap[key] || { name: name, kind: k, total: 0, count: 0 };
+      c.total += Math.round(Number(e.amount) || 0); c.count++;
+    });
+    ALL_CATEGORIES.forEach(function (c) {
+      if (kindDef(c.kind).view !== 'month') return;
+      var key = c.kind + '|' + c.name;
+      if (!catMap[key] && (budgetFor(c.name, ym) > 0 || c.name === '激ヤバ')) catMap[key] = { name: c.name, kind: c.kind, total: 0, count: 0 };
+    });
+    var cats = Object.keys(catMap).map(function (key) {
+      var c = catMap[key], d = catDefIn(c.name, c.kind);
+      c.emoji = d ? d.emoji : '';
+      c.color = d ? d.color : '#c9b6a0';
+      c.pct = expTotal ? Math.round(c.total / expTotal * 1000) / 10 : 0;
+      c.judge = kindDef(c.kind).view === 'month'
+        ? judgeBudget(c.total, budgetFor(c.name, ym), c.name === '激ヤバ')
+        : { has: false, spent: c.total };
+      return c;
+    }).sort(function (a, b) { return b.total - a.total; });
+
+    // ▼ 敵１〜敵４
+    var kinds = KINDS.map(function (k) {
+      var es = spends.filter(function (e) { return kindOf(e) === k.key; });
+      var total = sumAmt(es);
+      var mine = ALL_CATEGORIES.filter(function (c) { return c.kind === k.key; });
+      var o = {
+        key: k.key, label: k.label, color: k.color, view: k.view, total: total, count: es.length,
+        pct: expTotal ? Math.round(total / expTotal * 100) : 0,
+        top: cats.filter(function (c) { return c.kind === k.key && c.total > 0; }).slice(0, 3).map(function (c) { return c.name; })
+      };
+      if (k.view === 'month') {
+        o.judge = judgeBudget(total, mine.reduce(function (s, c) { return s + (Number(budgetFor(c.name, ym)) || 0); }, 0));
+      } else {
+        // 年で見るタブは「今年の予算」に対して、1月からこの月までにいくら使ったか
+        var yy = ym.slice(0, 4);
+        var yb = mine.reduce(function (s, c) { return s + (Number(budgetFor(c.name, yy + '-01')) || 0); }, 0);
+        var used = sumAmt(all.filter(function (e) {
+          return kindOf(e) === k.key && String(e.date).slice(0, 4) === yy && String(e.date).slice(0, 7) <= ym;
+        }));
+        o.year = { budget: yb, used: used, left: yb - used, pct: yb > 0 ? Math.round(used / yb * 100) : null };
+      }
+      return o;
+    });
+    // ▼ 月全体（月で見るタブのうち、予算が入っているタブだけの合計で勝負）
+    //   ※予算なしのタブ（固定費など）の支出まで入れると、予算が足りないように見えてしまうため
+    var mk = kinds.filter(function (k) { return k.view === 'month' && k.judge.has; });
+    var overall = judgeBudget(
+      mk.reduce(function (s, k) { return s + k.total; }, 0),
+      mk.reduce(function (s, k) { return s + (k.judge.budget || 0); }, 0));
+    overall.kindsLabel = mk.length ? mk.map(function (k) { return k.label.slice(0, 2); }).join('＋') : '月';
+
+    // ▼ 数字いろいろ（テンプレから入れた記録は「自分で書いた」数に入れない）
+    var own = spends.filter(function (e) { return !e.tpl_key; });
+    var memoN = own.filter(function (e) { return isRealMemo(e.memo); }).length;
+    var eat = spends.filter(function (e) { return e.category === '外食'; });
+    var nat = spends.filter(function (e) { return /那月/.test(String(e.memo || '') + ' ' + String(e.shop || '')); });
+    var unc = spends.filter(function (e) { return !e.category || e.category === '未分類'; });
+    var gek = spends.filter(function (e) { return e.category === '激ヤバ'; });
+
+    // ▼ 引用するメモ（ふりかえりのことばが入っているもの＋長めのもの）
+    var quotes = own.filter(function (e) { return isRealMemo(e.memo) && String(e.memo).trim().length >= 8; })
+      .map(function (e) {
+        var m = String(e.memo).trim();
+        var hit = REPORT_QUOTE_WORDS.filter(function (w) { return m.indexOf(w) !== -1; }).length;
+        return { date: String(e.date), shop: e.shop || '', amount: Math.round(Number(e.amount) || 0), category: e.category || '', memo: m, score: hit * 50 + Math.min(m.length, 80) };
+      })
+      .sort(function (a, b) { return b.score - a.score; }).slice(0, 4)
+      .sort(function (a, b) { return a.date < b.date ? -1 : 1; });
+
+    // ▼ 先月（先月の記録がまるまるそろっているときだけ、くらべる）
+    var pym = ymShift(ym, -1);
+    var prev = {
+      ym: pym,
+      total: sumAmt(all.filter(function (e) { return kindOf(e) !== 'income' && String(e.date).slice(0, 7) === pym; })),
+      complete: !!firstSpend && firstSpend <= pym + '-01'
+    };
+
+    var names = [];
+    incomes.forEach(function (e) { var n = String(e.shop || '').trim(); if (n && names.indexOf(n) === -1) names.push(n); });
+    return {
+      ym: ym, year: Number(ym.slice(0, 4)), month: Number(ym.slice(5, 7)), coverage: cov,
+      income: { total: incTotal, count: incomes.length, names: names },
+      expense: { total: expTotal, count: spends.length },
+      balance: incTotal - expTotal,
+      budget: overall, kinds: kinds, cats: cats,
+      star: cats.filter(function (c) { return c.total > 0; })[0] || null,
+      kpi: {
+        eatOut: { count: eat.length, total: sumAmt(eat) },
+        natsuki: { count: nat.length, total: sumAmt(nat) },
+        memo: { count: memoN, of: own.length, pct: own.length ? Math.round(memoN / own.length * 100) : 0 },
+        uncategorized: unc.length,
+        gekiyaba: { count: gek.length, total: sumAmt(gek) }
+      },
+      quotes: quotes, prev: prev
+    };
+  }
+
+  /** みだしの横のひとこと（ルールで決めます。AIではありません） */
+  function reportVerdict(R) {
+    var w;
+    if (!R.income.total) w = '収入の記録がまだありません';
+    else if (R.balance < 0) w = '赤字の月でした';
+    else {
+      var r = R.balance / R.income.total;
+      w = r < 0.03 ? '黒字。ただし、かなり際どい' : (r < 0.1 ? '黒字です' : 'しっかり黒字です');
+    }
+    return R.coverage.inProgress ? w + '（途中経過）' : w;
+  }
+
+  /** 数字を A4 のデザインにはめこんで、ひとつのHTMLにする */
+  function reportHtml(R) {
+    function n(v) { return Math.round(v).toLocaleString(); }
+    function signed(v) { return (v < 0 ? '−' : '＋') + n(Math.abs(v)); }
+    function md(d) { return Number(d.slice(5, 7)) + '/' + Number(d.slice(8, 10)); }
+    function starHtml(j) {
+      if (!j || !j.has) return '';
+      var bad = j.word === '負け' || j.word === '完敗';
+      return '<span class="stars' + (bad ? ' bad' : '') + '">' + j.stars + ' ' + j.word + '</span>';
+    }
+    function diffWord(j) {
+      if (!j || !j.has) return '';
+      return j.diff >= 0 ? 'のこり ' + n(j.diff) + '円' : n(-j.diff) + '円 オーバー';
+    }
+    var t = R.year + '年' + R.month + '月';
+    var bal = R.balance;
+    var h = '<!doctype html><html lang="ja"><head><meta charset="utf-8">'
+      + '<meta name="viewport" content="width=device-width,initial-scale=1">'
+      + '<title>敵との戦績 ' + t + '</title>'
+      + '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=Zen+Kaku+Gothic+New:wght@400;500;700;900&display=swap">'
+      + '<style>' + REPORT_CSS + '</style></head><body>';
+    h += '<div class="bar noprint"><button onclick="print()">🖨 印刷・PDFにする</button><span>⌘P（iPhoneは 共有→プリント）でもOK</span></div>';
+    h += '<div class="sheet">';
+
+    // ── みだし
+    h += '<header><div class="ttl"><small>かんたん家計簿 ふりかえり</small>' + t + 'の戦績</div>'
+      + '<div class="verdict"><div class="v num' + (bal < 0 ? ' minus' : '') + '">' + signed(bal) + '<span style="font-size:12pt">円</span></div>'
+      + '<div class="c">' + esc(reportVerdict(R)) + '</div></div></header>';
+    if (R.coverage.notes.length) h += '<div class="warn">⚠️ ' + esc(R.coverage.notes.join('／')) + '</div>';
+
+    // ── 収支と予算
+    var s = R.star, b = R.budget;
+    h += '<div class="money">'
+      + '<div><div class="k">入ってきたお金</div><div class="v num">' + n(R.income.total) + '</div>'
+      + '<div class="n">' + (R.income.names.length ? esc(R.income.names.join('・')) : '記録なし') + '</div></div>'
+      + '<div><div class="k">出ていったお金</div><div class="v num">' + n(R.expense.total) + '</div>'
+      + '<div class="n">' + R.expense.count + '件</div></div>'
+      + '<div><div class="k">予算との勝負（' + esc(b.kindsLabel) + '）</div>'
+      + (b.has
+          ? '<div class="v">' + starHtml(b) + '</div><div class="n">予算 ' + n(b.budget) + '円に対して<br><b>' + diffWord(b) + '</b></div>'
+          : '<div class="v" style="color:var(--faint);font-size:11pt">予算なし</div><div class="n">⚙️で予算を入れると勝負できます</div>')
+      + '</div>'
+      + '<div class="hi"><div class="k">今月の主役</div>'
+      + (s ? '<div class="v num plus">' + n(s.total) + '</div><div class="n"><b>' + esc(s.emoji + ' ' + s.name) + '＝支出の' + s.pct + '%</b></div>'
+           : '<div class="v num">0</div><div class="n">まだ支出がありません</div>')
+      + '</div></div>';
+
+    // ── 敵との戦い
+    h += '<div class="grid2"><section><h2>敵との戦い <span>タブ別</span></h2>';
+    R.kinds.forEach(function (k) {
+      var sub = k.count ? k.count + '件' + (k.top.length ? '・' + k.top.join('・') : '') : '出番なし';
+      var bud;
+      if (k.view === 'month') {
+        bud = k.judge.has ? starHtml(k.judge) + ' 予算 ' + n(k.judge.budget) + '円・' + diffWord(k.judge) : '予算なし';
+      } else {
+        bud = k.year.budget > 0
+          ? '今年の予算 ' + n(k.year.budget) + '円のうち ' + k.year.pct + '%（のこり ' + n(k.year.left) + '円）'
+          : '年の予算なし' + (k.year.used ? '（今年 ' + n(k.year.used) + '円）' : '');
+      }
+      h += '<div class="foe"><div class="chip" style="background:' + k.color + '"></div>'
+        + '<div class="nm">' + esc(k.label) + '<i>' + esc(sub) + '</i><em>' + bud + '</em></div>'
+        + '<div class="am num"' + (k.total ? '' : ' style="color:var(--faint)"') + '>' + n(k.total) + '</div>'
+        + '<div class="pc">' + (k.total ? k.pct + '%' : '—') + '</div></div>';
+    });
+    var idle = R.kinds.filter(function (k) { return !k.total; }).map(function (k) { return k.label.slice(0, 2); });
+    var notes = [];
+    if (idle.length) notes.push('<b>' + idle.join('と') + 'は出番なし</b>の月でした。');
+    if (R.coverage.complete && R.prev.complete) {
+      var dd = R.expense.total - R.prev.total;
+      notes.push('先月（' + Number(R.prev.ym.slice(5, 7)) + '月）より支出は <b>' + signed(dd) + '円</b>。');
+    }
+    if (notes.length) h += '<div class="note" style="margin-top:2.5mm">' + notes.join('') + '</div>';
+    h += '</section>';
+
+    // ── 費目ごとの勝負（予算の線より右にはみ出したら赤）
+    var withB = R.cats.filter(function (c) { return c.judge.has; })
+      .sort(function (a, b2) { return (b2.judge.ratio === null ? 9 : b2.judge.ratio) - (a.judge.ratio === null ? 9 : a.judge.ratio); });
+    var noB = R.cats.filter(function (c) { return !c.judge.has && c.total > 0; });
+    h += '<section><h2>費目ごとの勝負 <span>｜の線＝予算</span></h2>';
+    if (!withB.length) h += '<div class="note">予算の入った費目がありません。⚙️予算の設定で入れると、ここで勝負できます。</div>';
+    withB.slice(0, 11).forEach(function (c) {
+      var j = c.judge;
+      var over = j.ratio === null ? true : j.ratio > 1;
+      var w = j.ratio === null ? 100 : Math.min(j.ratio, 1.5) / 1.5 * 100;
+      h += '<div class="bud"><div class="cn">' + esc(c.emoji + ' ' + c.name) + '</div>'
+        + '<div class="track"><div class="fill" style="width:' + w.toFixed(1) + '%;background:' + (over ? 'var(--danger)' : c.color) + '"></div><div class="line"></div></div>'
+        + '<div class="cv">' + n(c.total) + '<small>/' + n(j.budget) + '</small></div>'
+        + '<div class="st' + (over ? ' bad' : '') + '">' + j.stars + '</div></div>';
+    });
+    if (noB.length) {
+      h += '<div class="nob"><b>予算なし</b>　' + noB.slice(0, 6).map(function (c) { return esc(c.name) + ' ' + n(c.total); }).join('・')
+        + (noB.length > 6 ? ' ほか' + (noB.length - 6) + '費目' : '') + '</div>';
+    }
+    h += '</section></div>';
+
+    // ── 数字4つ
+    var kp = R.kpi;
+    h += '<div class="kpi">'
+      + '<div><div class="v num">' + kp.eatOut.count + '<span>回</span></div><div class="k">外食した回数（' + n(kp.eatOut.total) + '円）</div></div>'
+      + '<div><div class="v num">' + n(kp.natsuki.total) + '</div><div class="k">那月ちゃんに（' + kp.natsuki.count + '件）</div></div>'
+      + '<div><div class="v num">' + kp.memo.pct + '<span>%</span></div><div class="k">メモを書いた割合（' + kp.memo.count + '/' + kp.memo.of + '件）</div></div>'
+      + '<div><div class="v num' + (kp.uncategorized ? '' : ' plus') + '">' + kp.uncategorized + '<span>件</span></div><div class="k">未分類のまま</div></div>'
+      + '</div>';
+
+    // ── メモとひとこと
+    h += '<div class="grid2"><section><h2>メモが残していたこと <span>あなたの言葉から</span></h2>';
+    if (!R.quotes.length) h += '<div class="note">この月は、引用できるメモがありませんでした。</div>';
+    R.quotes.forEach(function (q) {
+      h += '<div class="quote"><p>' + esc(q.memo) + '</p><cite>' + md(q.date) + ' ' + esc(q.shop) + ' ' + n(q.amount) + '円</cite></div>';
+    });
+    h += '</section><section><h2>ひとこと <span>クロコより</span></h2>'
+      + '<div class="tsukkomi soon"><div class="hd">🤖 準備中</div>'
+      + '<p>つぎのステップで、ここに<b>AIのふりかえり</b>（ツッコミ＋気づき＋ねぎらい）が入ります。</p></div>'
+      + '</section></div>';
+
+    // ── おしまい
+    h += '<footer><div>かんたん家計簿 ／ ' + md(R.coverage.start) + '〜' + md(R.coverage.end) + ' ／ 全' + (R.expense.count + R.income.count) + '件</div>'
+      + '<div>' + (b.has ? '予算との勝負 ' + b.stars + ' ' + b.word : '') + '</div></footer>';
+    h += '</div></body></html>';
+    return h;
+  }
+
+  // レポートのデザイン（承認ずみの見本と同じ色・書体）
+  var REPORT_CSS = [
+    ':root{--paper:#fffaf9;--ink:#3a3230;--sub:#7d6f6c;--faint:#b9a9a6;--rule:#efe2e0;--tint:#fdf1f3;--gold:#d4a843;--danger:#ff6b6b;--deep:#d4587d;--backdrop:#efe6e4}',
+    '*{box-sizing:border-box}',
+    'body{margin:0;background:var(--backdrop);font-family:"Zen Kaku Gothic New","Hiragino Sans",system-ui,sans-serif;color:var(--ink);-webkit-font-smoothing:antialiased;display:flex;flex-direction:column;align-items:center;padding:16px 12px 24px}',
+    '.bar{display:flex;align-items:center;gap:12px;margin-bottom:12px;font-size:12px;color:var(--sub)}',
+    '.bar button{border:none;border-radius:12px;padding:10px 18px;font:inherit;font-size:14px;font-weight:700;color:#fff;background:linear-gradient(135deg,#ffb3c6,#ff8fab);cursor:pointer}',
+    '.sheet{width:210mm;min-height:297mm;background:var(--paper);padding:11mm 12mm 9mm;box-shadow:0 6px 34px rgba(0,0,0,.18);display:flex;flex-direction:column;gap:4.5mm}',
+    '.num{font-family:"Bricolage Grotesque","Zen Kaku Gothic New",sans-serif;font-variant-numeric:tabular-nums;font-weight:800;letter-spacing:-.01em}',
+    'header{display:flex;align-items:flex-end;justify-content:space-between;gap:8mm;border-bottom:2.5px solid var(--ink);padding-bottom:3mm}',
+    '.ttl{font-size:23pt;font-weight:900;line-height:1.1}',
+    '.ttl small{display:block;font-size:8.4pt;font-weight:500;color:var(--sub);letter-spacing:.16em;margin-bottom:1.5mm}',
+    '.verdict{text-align:right;flex:none}.verdict .v{font-size:26pt;line-height:1;color:var(--deep)}.verdict .v.minus{color:var(--danger)}',
+    '.verdict .c{font-size:8.4pt;color:var(--sub);margin-top:1mm}',
+    '.warn{font-size:8.4pt;color:#a07a2a;background:#fff6dc;border:1.2px solid #f3dfa5;border-radius:2mm;padding:1.6mm 3mm;margin-top:-2mm}',
+    '.money{display:grid;grid-template-columns:1fr 1fr 1.15fr 1.2fr;border:1.6px solid var(--rule);border-radius:3mm;overflow:hidden}',
+    '.money>div{padding:3.2mm 3.6mm;border-right:1.6px solid var(--rule)}.money>div:last-child{border-right:0}.money .hi{background:var(--tint)}',
+    '.money .k{font-size:8pt;color:var(--sub);font-weight:700}.money .v{font-size:15pt;margin-top:.8mm}',
+    '.money .n{font-size:7.4pt;color:var(--faint);margin-top:.6mm;line-height:1.45}.money .n b{color:var(--sub)}',
+    '.plus{color:var(--deep)}',
+    '.stars{font-size:10.5pt;font-weight:900;color:#a8801f;letter-spacing:.02em;white-space:nowrap}.stars.bad{color:var(--danger)}',
+    '.grid2{display:grid;grid-template-columns:1.05fr 1fr;gap:6mm;align-items:start}',
+    'h2{font-size:9.6pt;font-weight:900;margin:0 0 2.2mm;padding-bottom:1.2mm;border-bottom:1.4px solid var(--rule);display:flex;justify-content:space-between;align-items:baseline}',
+    'h2 span{font-size:7.4pt;color:var(--faint);font-weight:500;letter-spacing:.06em}',
+    '.foe{display:flex;align-items:center;gap:2.5mm;padding:1.6mm 0;border-bottom:1px dotted var(--rule)}.foe:last-of-type{border-bottom:0}',
+    '.chip{width:5.5mm;height:5.5mm;border-radius:1.6mm;flex:none}',
+    '.foe .nm{flex:1;min-width:0;font-size:9pt;font-weight:700}',
+    '.foe .nm i{display:block;font-style:normal;font-size:7.2pt;color:var(--faint);font-weight:500}',
+    '.foe .nm em{display:block;font-style:normal;font-size:7.4pt;color:var(--sub);font-weight:500;margin-top:.4mm}.foe .nm em .stars{font-size:8pt}',
+    '.foe .am{font-size:11.5pt}.foe .pc{width:11mm;text-align:right;font-size:8pt;color:var(--sub);font-family:"Bricolage Grotesque",sans-serif}',
+    '.bud{display:flex;align-items:center;gap:1.8mm;margin-bottom:1.5mm}',
+    '.bud .cn{width:24mm;font-size:7.8pt;font-weight:500;flex:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+    '.bud .track{position:relative;flex:1;height:4mm;background:#f6ecea;border-radius:2mm;overflow:hidden}',
+    '.bud .fill{height:100%;border-radius:2mm}',
+    '.bud .line{position:absolute;top:-.5mm;bottom:-.5mm;left:66.67%;width:.6mm;background:var(--ink);opacity:.55}',
+    '.bud .cv{width:23mm;text-align:right;font-size:8pt;font-family:"Bricolage Grotesque",sans-serif;font-variant-numeric:tabular-nums;font-weight:600}',
+    '.bud .cv small{color:var(--faint);font-weight:400}',
+    '.bud .st{width:10mm;text-align:right;font-size:7.4pt;color:#a8801f;font-weight:900;letter-spacing:-.04em}.bud .st.bad{color:var(--danger)}',
+    '.nob{font-size:7.4pt;color:var(--sub);margin-top:2mm;line-height:1.55}.nob b{color:var(--faint)}',
+    '.note{background:var(--tint);border-radius:3mm;padding:2.8mm 3.6mm;font-size:8.4pt;line-height:1.65}.note b{color:var(--deep)}',
+    '.kpi{display:grid;grid-template-columns:repeat(4,1fr);gap:2.5mm}',
+    '.kpi>div{border:1.4px solid var(--rule);border-radius:2.5mm;padding:2.6mm 2mm;text-align:center}',
+    '.kpi .v{font-size:13pt;line-height:1.1}.kpi .v span{font-size:8pt}.kpi .k{font-size:7pt;color:var(--sub);margin-top:1mm;font-weight:700}',
+    '.quote{border-left:2.5px solid #ff8fab;padding:0 0 0 3mm;margin:0 0 3mm}.quote:last-child{margin-bottom:0}',
+    '.quote p{margin:0;font-size:8.6pt;line-height:1.6}.quote cite{display:block;font-style:normal;font-size:7.2pt;color:var(--faint);margin-top:.8mm}',
+    '.tsukkomi{border:2px solid #ff8fab;border-radius:3mm;padding:3.4mm 4mm;background:#fff}',
+    '.tsukkomi .hd{font-size:8.6pt;font-weight:900;color:var(--deep);margin-bottom:1.6mm}',
+    '.tsukkomi p{margin:0 0 1.8mm;font-size:8.6pt;line-height:1.66}.tsukkomi p:last-child{margin-bottom:0}',
+    '.tsukkomi.soon{border-style:dashed;border-color:var(--rule);background:transparent}.tsukkomi.soon .hd{color:var(--faint)}',
+    'footer{margin-top:auto;border-top:1.4px solid var(--rule);padding-top:2.5mm;display:flex;justify-content:space-between;align-items:center;font-size:7.4pt;color:var(--faint)}',
+    '@media print{@page{size:A4;margin:0}body{background:#fff;padding:0;display:block}.noprint{display:none}.sheet{box-shadow:none;width:auto;min-height:auto}}',
+    '@media (max-width:230mm){body{padding:10px 6px}.sheet{width:100%;padding:7mm 6mm}.money{grid-template-columns:1fr 1fr}.grid2{grid-template-columns:1fr}.kpi{grid-template-columns:1fr 1fr}',
+    '  header{flex-direction:column;align-items:flex-start;gap:2mm}.ttl{font-size:19pt}.verdict{text-align:left}.verdict .v{font-size:22pt}',
+    '  .bar{flex-direction:column;gap:6px;text-align:center}}'
+  ].join('\n');
+
+  /** ［📄 ふりかえりレポート］別のタブに開く（印刷・PDF保存がしやすいように） */
+  function openReport() {
+    var ym = reportYM();
+    var w = window.open('', '_blank');
+    if (!w) { alert('新しいタブを開けませんでした。ポップアップのブロックを外してから、もう一度お試しください。'); return; }
+    closeSettings();
+    w.document.open();
+    w.document.write(reportHtml(buildReport(ym)));
+    w.document.close();
   }
 
   /* ---- 収入の入力シート ---- */
