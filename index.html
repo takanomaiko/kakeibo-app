@@ -244,6 +244,15 @@
   #tplBar .tplBox.warn { background: #ffecec; border: 1.5px solid #f0bcbc; }
   #tplBar .tplBox.warn .tplMsg { color: #b3565b; word-break: break-word; }
   #tplBar .tplBox.warn .tplBtns button.ghost { color: #b3565b; border-color: #f0c4c4; }
+  /* ⚡️ 入れ忘れかもしれない固定費（エラーの赤とは別の、やわらかい黄色） */
+  #tplBar .tplBox.miss { background: #fff6dc; border: 1.5px solid #f3dfa5; }
+  #tplBar .tplBox.miss .tplMsg { color: #8a6420; }
+  #tplBar .missRow { display: flex; align-items: center; gap: 6px; padding: 9px 0 2px; margin-top: 8px; border-top: 1px dashed #f0d99a; }
+  #tplBar .missName { flex: 1; min-width: 0; font-size: 13px; color: #6f5418; line-height: 1.45; word-break: break-word; }
+  #tplBar .missName small { display: block; font-size: 11px; color: #a08040; }
+  #tplBar .missRow button { flex: none; border-radius: 10px; padding: 7px 10px; font-family: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
+  #tplBar .missRow .missGo { border: none; color: #fff; background: linear-gradient(135deg, #ffd670, #f0b440); }
+  #tplBar .missRow .missOk { background: none; color: #a07a2a; border: 1.5px solid #f0d99a; }
   #tplBar .tplBtns { display: flex; gap: 8px; margin-top: 10px; }
   #tplBar .tplBtns button { flex: 1; border: none; border-radius: 12px; padding: 10px; font-family: inherit; font-size: 14px; font-weight: 700; color: #fff; background: linear-gradient(135deg, var(--g1), var(--g2)); cursor: pointer; }
   #tplBar .tplBtns button.ghost { background: none; color: var(--accent); border: 1.5px solid var(--line); }
@@ -1465,6 +1474,20 @@
         + '</div></div>';
     }
 
+    // ③ 先月まであったのに、まだ入っていない固定費
+    missList = state.uid ? missingFixed() : [];
+    if (missList.length) {
+      h += '<div class="tplBox miss"><div class="tplMsg">⚡️ <b>いつもの固定費が入っていないかも</b></div>';
+      missList.forEach(function (m, i) {
+        var mm = Number(m.ym.slice(5, 7));
+        h += '<div class="missRow"><div class="missName"><b>' + esc(m.shop) + '</b> ' + yen(m.amount)
+          + '<small>' + Number(m.m2.slice(5, 7)) + '月・' + Number(m.m1.slice(5, 7)) + '月にあったのに、' + mm + '月はまだありません</small></div>'
+          + '<button class="missGo" onclick="missAdd(' + i + ')">入れる</button>'
+          + '<button class="missOk" onclick="missDismiss(' + i + ')">' + mm + '月はなし</button></div>';
+      });
+      h += '</div>';
+    }
+
     el.innerHTML = h;
     el.style.display = h ? 'block' : 'none';
   }
@@ -1475,6 +1498,132 @@
   function dismissMailWarn() {
     var r = (state.runs || [])[0];
     mailWarnDismissed = r ? r.id : 0;
+    renderTplBar();
+  }
+
+  /* ============================================================
+     ⚡️ 先月まであったのに、今月ない固定費（入れ忘れチェック）
+     8月に電気代がまるごと抜けていて、カード明細と照合するまで気づかなかったことがありました。
+     その再発よけです。見るのは敵１固定費タブの記録だけです。
+
+     ▼ 知らせる条件（ぜんぶ満たしたとき）
+       ① 2ヶ月つづけてあった（先々月と先月）
+          … 1回きりの買い物や、2ヶ月ごとの水道は出ません
+       ② その月には、同じ内容の記録がまだ1件もない
+       ③ 先月の日付から5日すぎた
+          … 支払い日が少しずれても、あわてて出ないように
+          （月末の支払いで③がその月におさまらないときは、翌月に「先月ぶん」として出ます）
+
+     ▼ 見ない記録
+       毎月テンプレから入れた記録（tpl_key あり）… 上の🔁のお知らせが受けもっています
+
+     ▼ 見くらべ方
+       内容の名前で見くらべます（全角半角・空白・記号・うしろの「（仮）」はそろえてから）。
+       メールの元の店名（shop_raw）でも見くらべるので、名前を直した記録でも見失いません。
+
+     ▼「◯月はなし」を押したものは、その月だけ出なくなります
+       ※この端末の中にだけ覚えます（スマホとパソコンは別々） */
+  var MISS_GRACE_DAYS = 5;
+  var MISS_OK_KEY = 'kakeibo_miss_ok_v1';
+  var missList = [];   // いまバーに出している一覧（ボタンは番号でさします）
+
+  /** 'YYYY-MM' を n ヶ月ずらす（1月の前は去年の12月） */
+  function ymShift(ym, n) {
+    var d = new Date(Number(ym.slice(0, 4)), Number(ym.slice(5, 7)) - 1 + n, 1);
+    return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2);
+  }
+  /** 見くらべ用の名前（全角半角・大文字小文字・空白・記号・うしろの（仮）をそろえる） */
+  function missNorm(s) { return rcNorm(stripTentative(s)).replace(/[.,・\-]/g, ''); }
+  /** その記録の名前（直した名前と、メールの元の店名の両方） */
+  function missKeys(e) {
+    var ks = [missNorm(e.shop)];
+    var raw = missNorm(e.shop_raw);
+    if (raw && raw !== ks[0]) ks.push(raw);
+    return ks.filter(function (k) { return k; });
+  }
+  function missOkLoad() {
+    try { return JSON.parse(localStorage.getItem(MISS_OK_KEY) || '{}') || {}; } catch (e) { return {}; }
+  }
+  function missOkSave(m) {
+    try { localStorage.setItem(MISS_OK_KEY, JSON.stringify(m)); } catch (e) { /* 覚えられなくても動きます */ }
+  }
+
+  /** 入れ忘れかもしれない固定費の一覧（today は省略すると今日） */
+  function missingFixed(today) {
+    today = today || new Date();
+    var ym = today.getFullYear() + '-' + ('0' + (today.getMonth() + 1)).slice(-2);
+    var ok = missOkLoad();
+    var fixed = (state.entries || []).filter(function (e) { return kindOf(e) === 'fixed'; });
+    // 月ごとに「その月にある名前」を集めておく（こちらはテンプレの記録もふくめます）
+    var byMonth = {};
+    fixed.forEach(function (e) {
+      var names = byMonth[String(e.date).slice(0, 7)] = byMonth[String(e.date).slice(0, 7)] || {};
+      missKeys(e).forEach(function (k) { names[k] = true; });
+    });
+    function hasIn(m, keys) {
+      var names = byMonth[m] || {};
+      return keys.some(function (k) { return names[k]; });
+    }
+    var out = [];
+    // 先月ぶん（もう終わった月）と、今月ぶんの2つを調べます
+    [ymShift(ym, -1), ym].forEach(function (target) {
+      var m1 = ymShift(target, -1), m2 = ymShift(target, -2);
+      // 候補＝その前の月にあった記録（テンプレから入れたものは除く）。同じ名前どうしは1つにまとめる
+      var groups = [];
+      fixed.forEach(function (e) {
+        if (e.tpl_key || String(e.date).slice(0, 7) !== m1) return;
+        var ks = missKeys(e);
+        if (!ks.length) return;
+        var g = null;
+        for (var i = 0; i < groups.length && !g; i++) {
+          if (ks.some(function (k) { return groups[i].keys[k]; })) g = groups[i];
+        }
+        if (!g) { g = { keys: {}, last: e }; groups.push(g); }
+        ks.forEach(function (k) { g.keys[k] = true; });
+        if (String(e.date) > String(g.last.date)) g.last = e;
+      });
+      groups.forEach(function (g) {
+        var keys = Object.keys(g.keys), e = g.last;
+        if (hasIn(target, keys)) return;     // ② もう入っている
+        if (!hasIn(m2, keys)) return;        // ① 2ヶ月つづけてはいない
+        var day = Number(String(e.date).slice(8, 10));
+        if (target === ym && today.getDate() < day + MISS_GRACE_DAYS) return;   // ③ まだ早い
+        var id = target + '|' + keys[0];
+        if (ok[id]) return;                  // 「◯月はなし」を押したもの
+        out.push({
+          id: id, ym: target, m1: m1, m2: m2, day: day,
+          shop: stripTentative(e.shop) || e.shop_raw || '（無題）',
+          amount: Math.round(Number(e.amount) || 0),
+          category: e.category || ''
+        });
+      });
+    });
+    return out;
+  }
+
+  /** ［入れる］敵１固定費タブのその月を開いて、先月と同じ中身で入力シートを出す */
+  function missAdd(i) {
+    var m = missList[i];
+    if (!m) return;
+    switchKind('fixed');   // すでに敵１なら何もしません
+    y = Number(m.ym.slice(0, 4)); mo = Number(m.ym.slice(5, 7)) - 1;
+    load();
+    openSheet();
+    var last = new Date(y, mo + 1, 0).getDate();   // 31日が無い月は月末にまるめる
+    document.getElementById('f_date').value = m.ym + '-' + ('0' + Math.min(m.day, last)).slice(-2);
+    document.getElementById('f_amount').value = m.amount;
+    document.getElementById('f_shop').value = m.shop;
+    var sel = document.getElementById('f_cat');
+    if (m.category && data && data.categories.indexOf(m.category) !== -1) sel.value = m.category;
+  }
+  /** ［◯月はなし］その月だけ出さないようにする（3ヶ月より前の印は掃除します） */
+  function missDismiss(i) {
+    var m = missList[i];
+    if (!m) return;
+    var ok = missOkLoad(), old = ymShift(realYM(), -3);
+    Object.keys(ok).forEach(function (k) { if (k.slice(0, 7) < old) delete ok[k]; });
+    ok[m.id] = 1;
+    missOkSave(ok);
     renderTplBar();
   }
   /* ---- 入れる前に中身を見せる画面 ----
