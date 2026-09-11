@@ -571,7 +571,7 @@
   var kind = 'variable';   // いま見ているタブ（'variable'＝敵２変動費／'fixed'＝敵１固定費）
   var data = null;
   // ネットから取ってきたデータを一時的に持っておく箱
-  var state = { uid: null, entries: [], budgets: {}, mbudgets: {}, templates: [], tplKeys: {}, runs: [] };
+  var state = { uid: null, entries: [], budgets: {}, mbudgets: {}, templates: [], tplKeys: {}, runs: [], reviews: [] };
   var lastFetchAt = 0;   // 最後にデータを取ってきた時刻（開き直したときの自動更新用）
 
   function ymStr() { return y + '-' + ('0' + (mo + 1)).slice(-2); }
@@ -623,7 +623,8 @@
       sb.from('monthly_budgets').select('*'),
       sb.from('categories').select('*'),
       sb.from('templates').select('*'),
-      sb.from('job_runs').select('*').order('ran_at', { ascending: false }).limit(5)
+      sb.from('job_runs').select('*').order('ran_at', { ascending: false }).limit(5),
+      sb.from('reviews').select('*').order('id', { ascending: false }).limit(36)
     ]);
     if (res[0].error) throw res[0].error;
     if (res[1].error) throw res[1].error;
@@ -681,12 +682,14 @@
     state.templates.sort(function (a, b) { return (a.sort || 0) - (b.sort || 0); });
     // メール取り込みの実行記録（新しい順。job_runs が未作成でも動きます）
     state.runs = (res[5] && !res[5].error) ? (res[5].data || []) : [];
+    // AIふりかえり（新しい順。reviews が未作成でも動きます）
+    state.reviews = (res[6] && !res[6].error) ? (res[6].data || []) : [];
     applyKind();
     lastFetchAt = Date.now();
   }
   async function refresh() {
     document.getElementById('app').innerHTML = '<div class="empty">読み込み中…♪</div>';
-    try { await fetchAll(); load(); }
+    try { await fetchAll(); load(); maybeAutoReview(); }
     catch (e) { document.getElementById('app').innerHTML = '<div class="empty">読み込みエラー：' + esc(e.message || e) + '</div>'; }
   }
 
@@ -1175,6 +1178,10 @@
     h += '<button class="primaryBtn" id="setSaveBtn" onclick="saveSettings()">保存する</button>';
     h += '<button class="linkBtn" onclick="openYear()">📊 年間まとめ（収入と支出）</button>';
     h += '<button class="linkBtn" onclick="openReport()">📄 ' + reportYM().slice(0, 4) + '年' + Number(reportYM().slice(5, 7)) + '月のふりかえりレポート（A4）</button>';
+    if (GAS_FETCH_URL) {
+      h += '<button class="linkBtn" onclick="requestReview(reportYM())">🤖 ' + Number(reportYM().slice(5, 7)) + '月のひとことをAIに'
+        + (latestReview(reportYM()) ? '書き直してもらう' : '書いてもらう') + '</button>';
+    }
     h += '<button class="linkBtn" onclick="openCatManager()">🏷 費目を編集（追加・名前・色）</button>';
     h += '<button class="linkBtn" onclick="openTplManager()">🔁 毎月のテンプレ（きまった出費・収入）</button>';
     h += '<button class="linkBtn" onclick="openImport()">📥 データをまとめて取り込み</button>';
@@ -2945,10 +2952,15 @@
     R.quotes.forEach(function (q) {
       h += '<div class="quote"><p>' + esc(q.memo) + '</p><cite>' + md(q.date) + ' ' + esc(q.shop) + ' ' + n(q.amount) + '円</cite></div>';
     });
-    h += '</section><section><h2>ひとこと <span>クロコより</span></h2>'
-      + '<div class="tsukkomi soon"><div class="hd">🤖 準備中</div>'
-      + '<p>つぎのステップで、ここに<b>AIのふりかえり</b>（ツッコミ＋気づき＋ねぎらい）が入ります。</p></div>'
-      + '</section></div>';
+    h += '</section><section><h2>ひとこと <span>クロコより</span></h2>';
+    var rv = R.review && R.review.body;
+    if (rv && rv.tsukkomi && rv.negirai) {
+      h += aiBoxHtml(rv.tsukkomi, '') + aiBoxHtml(rv.negirai, ' gold');
+    } else {
+      h += '<div class="tsukkomi soon"><div class="hd">🤖 まだありません</div>'
+        + '<p>⚙️設定の［🤖 AIにひとことを書いてもらう］を押すと、ここに<b>AIのふりかえり</b>（ツッコミ＋気づき＋ねぎらい）が入ります。</p></div>';
+    }
+    h += '</section></div>';
 
     // ── おしまい
     h += '<footer><div>かんたん家計簿 ／ ' + md(R.coverage.start) + '〜' + md(R.coverage.end) + ' ／ 全' + (R.expense.count + R.income.count) + '件</div>'
@@ -3006,6 +3018,7 @@
     '.tsukkomi .hd{font-size:8.6pt;font-weight:900;color:var(--deep);margin-bottom:1.6mm}',
     '.tsukkomi p{margin:0 0 1.8mm;font-size:8.6pt;line-height:1.66}.tsukkomi p:last-child{margin-bottom:0}',
     '.tsukkomi.soon{border-style:dashed;border-color:var(--rule);background:transparent}.tsukkomi.soon .hd{color:var(--faint)}',
+    '.tsukkomi.gold{border-color:var(--gold);margin-top:3mm}.tsukkomi.gold .hd{color:#a8801f}',
     'footer{margin-top:auto;border-top:1.4px solid var(--rule);padding-top:2.5mm;display:flex;justify-content:space-between;align-items:center;font-size:7.4pt;color:var(--faint)}',
     '@media print{@page{size:A4;margin:0}body{background:#fff;padding:0;display:block}.noprint{display:none}.sheet{box-shadow:none;width:auto;min-height:auto}}',
     '@media (max-width:230mm){body{padding:10px 6px}.sheet{width:100%;padding:7mm 6mm}.money{grid-template-columns:1fr 1fr}.grid2{grid-template-columns:1fr}.kpi{grid-template-columns:1fr 1fr}',
@@ -3020,8 +3033,127 @@
     if (!w) { alert('新しいタブを開けませんでした。ポップアップのブロックを外してから、もう一度お試しください。'); return; }
     closeSettings();
     w.document.open();
-    w.document.write(reportHtml(buildReport(ym)));
+    var R = buildReport(ym);
+    R.review = latestReview(ym);   // AIのひとこと（あれば）
+    w.document.write(reportHtml(R));
     w.document.close();
+  }
+
+  /* ============================================================
+     🤖 AIふりかえり（レポートの「ひとこと」をAIに書いてもらう）
+     ・アプリが「数字（buildReport の結果）＋その月のメモ」を GAS に送る
+     ・GAS が Claude に文章だけ書いてもらって、Supabase の reviews 表に保存する
+     ・アプリは reviews 表を見に行って、届いたらレポートに出す
+       （🔄ボタンと同じく、GASの返事は直接読めないので「記録を見に行く」方式です）
+     ★AIの性格（指示文）は GAS 側にあります。ここには数字とメモを送るだけです。
+     ★月が変わって最初に開いたとき、先月ぶんを自動でお願いします（1つの端末につき月1回まで）。
+       照合で数字が変わったときは、⚙️設定の［書き直してもらう］でもう一度書いてもらえます。
+     ============================================================ */
+  var REVIEW_AUTO_KEY = 'kakeibo_review_auto_v1';
+  var reviewBusy = false;
+
+  /** その月のいちばん新しいAIのひとこと。withErrors＝エラーの記録も返す */
+  function latestReview(ym, withErrors) {
+    var list = state.reviews || [];
+    for (var i = 0; i < list.length; i++) {
+      var r = list[i];
+      if (r.ym !== ym || !r.body) continue;
+      if (r.body.error && !withErrors) continue;
+      return r;
+    }
+    return null;
+  }
+  /** **ここ** を太字にする（先に esc してから呼ぶこと） */
+  function mdBold(s) { return String(s).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>'); }
+  function aiBoxHtml(box, cls) {
+    return '<div class="tsukkomi' + cls + '"><div class="hd">' + esc(box.title || '') + '</div>'
+      + (box.paragraphs || []).map(function (p) { return '<p>' + mdBold(esc(p)) + '</p>'; }).join('')
+      + '</div>';
+  }
+
+  /** AIに渡す中身（数字はぜんぶ buildReport が計算したもの。AIには計算させません） */
+  function reviewFacts(ym) {
+    var R = buildReport(ym);
+    var report = {
+      ym: R.ym, coverage: R.coverage, income: R.income, expense: R.expense, balance: R.balance,
+      budget: R.budget, kpi: R.kpi, prev: R.prev,
+      star: R.star ? { name: R.star.name, total: R.star.total, pct: R.star.pct } : null,
+      kinds: R.kinds.map(function (k) {
+        return { label: k.label, total: k.total, count: k.count, pct: k.pct, top: k.top, judge: k.judge || null, year: k.year || null };
+      }),
+      cats: R.cats.map(function (c) {
+        return { name: c.name, tab: kindDef(c.kind).label, total: c.total, count: c.count, pct: c.pct, judge: c.judge };
+      })
+    };
+    // その月のメモ（テンプレから入れた記録は除く。長すぎるものは300字まで）
+    var memos = (state.entries || []).filter(function (e) {
+      return String(e.date).slice(0, 7) === ym && kindOf(e) !== 'income' && !e.tpl_key && isRealMemo(e.memo);
+    }).sort(function (a, b) { return a.date < b.date ? -1 : 1; }).slice(0, 150).map(function (e) {
+      return { date: String(e.date), shop: e.shop || '', amount: Math.round(Number(e.amount) || 0),
+               category: e.category || '', tab: kindDef(e.kind).label, memo: String(e.memo).trim().slice(0, 300) };
+    });
+    // これまでにツッコんだ話題（くり返さないように。前の3ヶ月ぶん）
+    var topics = [], seenYM = {};
+    (state.reviews || []).forEach(function (r) {
+      if (r.ym >= ym || seenYM[r.ym] || !r.body || !r.body.tsukkomi) return;
+      seenYM[r.ym] = true;
+      if (topics.length < 3) topics.push({ ym: r.ym, topic: r.body.tsukkomi.topic || r.body.tsukkomi.title || '' });
+    });
+    return { report: report, memos: memos, previousTopics: topics };
+  }
+
+  /** ［🤖 AIに書いてもらう］GASにお願いして、reviews 表に届くのを待つ */
+  async function requestReview(ym, auto) {
+    if (!GAS_FETCH_URL || reviewBusy) return;
+    reviewBusy = true;
+    closeSettings();
+    var mon = Number(ym.slice(5, 7)) + '月';
+    toast('🤖 ' + mon + 'のふりかえりをAIが書いています…（1〜2分）', 180000);
+    try {
+      var s = await sb.auth.getSession();
+      var token = s.data.session && s.data.session.access_token;
+      if (!token) { toast('ログインし直してください🙏'); return; }
+      // 送る前の「その月のいちばん新しい記録の番号」をおぼえておく（これより大きい番号が今回の返事）
+      var b = await sb.from('reviews').select('id').eq('ym', ym).order('id', { ascending: false }).limit(1);
+      var beforeId = (!b.error && b.data && b.data[0]) ? b.data[0].id : 0;
+      try {
+        await fetch(GAS_FETCH_URL, {
+          method: 'POST',
+          mode: 'no-cors',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({ token: token, action: 'review', ym: ym, facts: reviewFacts(ym) })
+        });
+      } catch (e) { /* 返事は読めない決まりなので、ここは気にしない */ }
+
+      // AIが書くのに1〜2分かかるので、5秒おきに最大40回（約3分）ようすを見る
+      var got = null;
+      for (var i = 0; i < 40 && !got; i++) {
+        await sleep(5000);
+        var r = await sb.from('reviews').select('*').eq('ym', ym).gt('id', beforeId).order('id', { ascending: false }).limit(1);
+        if (!r.error && r.data && r.data[0]) got = r.data[0];
+      }
+      if (got) state.reviews = [got].concat(state.reviews || []);
+      if (!got) toast('⚠️ AIから返事がありません。しばらくしてから、⚙️設定でもう一度お試しください', 9000);
+      else if (got.body && got.body.error) toast('⚠️ AIのエラー：' + got.body.error, 12000);
+      else toast('🤖 ' + mon + 'のひとことが届きました。⚙️設定の📄レポートで読めます', 9000);
+    } finally {
+      reviewBusy = false;
+    }
+  }
+
+  /** 月が変わって最初に開いたとき、先月ぶんを自動でお願いする（1つの端末につき月1回まで） */
+  function maybeAutoReview() {
+    if (!state.uid || !GAS_FETCH_URL || reviewBusy) return;
+    var ym = ymShift(realYM(), -1);
+    if (latestReview(ym, true)) return;   // もう書いてある（またはエラーの記録がある）→ 自動ではやらない
+    var has = (state.entries || []).some(function (e) { return String(e.date).slice(0, 7) === ym && kindOf(e) !== 'income'; });
+    if (!has) return;
+    // 覚えておけない端末では自動で動かしません（開くたびにお金がかからないように）
+    try {
+      if (localStorage.getItem(REVIEW_AUTO_KEY) === ym) return;
+      localStorage.setItem(REVIEW_AUTO_KEY, ym);
+    } catch (e) { return; }
+    requestReview(ym, true);
   }
 
   /* ---- 収入の入力シート ---- */
@@ -3205,7 +3337,7 @@
   }
   async function doLogout() {
     await sb.auth.signOut();
-    state = { uid: null, entries: [], budgets: {}, mbudgets: {}, templates: [], tplKeys: {}, runs: [] };
+    state = { uid: null, entries: [], budgets: {}, mbudgets: {}, templates: [], tplKeys: {}, runs: [], reviews: [] };
     closeSettings();
     renderTplBar();
     document.body.classList.remove('signed-in');
